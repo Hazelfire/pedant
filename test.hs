@@ -19,6 +19,8 @@ import qualified Data.Set as Set
 import qualified Data.Bifunctor as Bifunctor
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.List.NonEmpty (NonEmpty((:|)))
+import qualified Language.LSP.Types as LSP
+import LSP
 
 
 -- | Defining a shallow embedding for a typed number.
@@ -63,14 +65,16 @@ instance Floating TypedNumber where
 
 instance Num TypedNumber where
   (TypedNumber x a) * (TypedNumber y b) = either InvalidTypedNumber (TypedNumber (x * y)) (dimMult a b)
-  a * _ = a
+  a@(InvalidTypedNumber _) * _ = a
+  _ * a@(InvalidTypedNumber _) = a
 
   (TypedNumber x a) + (TypedNumber y b) = 
     if a == b then
       TypedNumber (x + y) a
     else
       InvalidTypedNumber $ "Could not add " ++ show a ++ " and " ++ show b
-  a + _ = a
+  a@(InvalidTypedNumber _) + _ = a
+  _ + a@(InvalidTypedNumber _) = a
 
   negate (TypedNumber x a) = 
       TypedNumber (-x) a
@@ -286,12 +290,59 @@ postfix  name f = Postfix  (do
   return (PositionedExpression pos . f)
   )
 
+getErrors :: String -> IO [LSP.Diagnostic]
+getErrors name = do
+  contents <- readFile name
+  case parse program name (T.pack contents) of
+    Right parsed ->
+      case typeCheck Map.empty parsed of
+        Right valid ->
+          return []
+        Left err@(TypeError (PositionData offset) _) -> do
+          let diag = getErrorBundle err name (T.pack contents) offset
+          return $ bundleToDiagnostic diag
+    Left err ->
+      return $ bundleToDiagnostic err
+
+bundleToDiagnostic :: ShowErrorComponent b => ParseErrorBundle Text b -> [LSP.Diagnostic]
+bundleToDiagnostic diag =
+ let (SourcePos _ column row) = pstateSourcePos (bundlePosState diag)
+ in
+  List.map (\err -> 
+        LSP.Diagnostic
+            (LSP.Range (LSP.Position (unPos column) (unPos row)) (LSP.Position (unPos column) (unPos row + 1)))
+            (Just LSP.DsError)  -- severity
+            Nothing  -- code
+            (Just "lsp-ped") -- source
+            (T.pack $ parseErrorTextPretty err)
+            Nothing -- tags
+            (Just (LSP.List [])))
+    (NonEmpty.toList (bundleErrors diag))
+
+
+getErrorBundle :: ShowErrorComponent a => a -> String -> Text -> Int -> ParseErrorBundle Text a
+getErrorBundle err name contents offset = 
+    let initialPosState = 
+          PosState
+            { pstateInput = contents,
+              pstateOffset = 0,
+              pstateSourcePos = initialPos name,
+              pstateTabWidth = defaultTabWidth,
+              pstateLinePrefix = ""
+            }
+        ([(a, sourcePos)], posState)= attachSourcePos id [offset] initialPosState
+        newPosState = initialPosState { pstateSourcePos = sourcePos, pstateInput = contents, pstateOffset = 0}
+        error = ParseErrorBundle (FancyError offset (Set.singleton (ErrorCustom err)) :| [] ) newPosState
+    in
+      error 
+
 main :: IO ()
 main = do
   args <- Env.getArgs
   case args of
-    [] -> putStrLn "dimensional [file]"
-    (name :_) -> do
+    ("lsp": _) -> do
+      void $ LSP.runLSP getErrors
+    ("compile" : name :_) -> do
       contents <- readFile name
       case parse program name (T.pack contents) of
         Right a ->
@@ -300,21 +351,10 @@ main = do
               forM_ (List.reverse (OMap.assocs $ executeProgram OMap.empty a)) $ \(name, value) ->
                 putStrLn $ name  ++ " = "++ show value
             Left err@(TypeError (PositionData offset) _) -> do
-              let initialPosState = 
-                    PosState
-                      { pstateInput = contents,
-                        pstateOffset = 0,
-                        pstateSourcePos = initialPos name,
-                        pstateTabWidth = defaultTabWidth,
-                        pstateLinePrefix = ""
-                      }
-                  ([(a, sourcePos)], posState)= attachSourcePos id [offset] initialPosState
-                  newPosState = initialPosState { pstateSourcePos = sourcePos, pstateInput = contents, pstateOffset = 0}
-                  error = ParseErrorBundle (FancyError offset (Set.singleton (ErrorCustom err)) :| [] ) newPosState
-              print offset
-              print sourcePos
+              let error = getErrorBundle err name (T.pack contents) offset
               putStrLn (errorBundlePretty error)
         Left b -> fail (errorBundlePretty b)
+    _ -> putStrLn "dimensional [file]"
 
 data TypeError = TypeError PositionData String
   deriving (Eq, Ord)
