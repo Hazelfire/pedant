@@ -1,24 +1,24 @@
-donation_size = 100000
+donation_size = 100000 usd
 transfers_of_cost = 0.87
 total_funding_available = transfers_of_cost * donation_size
 total_transfer_size = 1000 usd
-average_household_size = 4.7 people
+average_household_size = 4.7 person 
 size_of_transfer_per_person = total_transfer_size / average_household_size
 
 percent_of_transfers_invested = 0.39
 amount_invested = percent_of_transfers_invested * size_of_transfer_per_person
 consumption_possible_by_funds = (1 - percent_of_transfers_invested) * size_of_transfer_per_person
-return_on_investment = 0.10 year-1
+return_on_investment = 0.10
 annual_increase_consumption_by_roi = return_on_investment * amount_invested
 
-baseline_consumption_per_capita = 285.92 usd people-1
-immediate_increase_of_consumption = ln((consumption_possible_by_funds + baseline_consumption_per_capita) /consumption_possible_by_funds)
+baseline_consumption_per_capita = 285.92 usd person-1
+immediate_increase_of_consumption = ln((consumption_possible_by_funds + baseline_consumption_per_capita) /consumption_possible_by_funds) * (1 year)
 future_increase_in_ln_consumption = ln((consumption_possible_by_funds + baseline_consumption_per_capita) / consumption_possible_by_funds)
 discount_rate = 1.04 ^year-1
 duration_of_investment = 10 year
 pv_of_investment = future_increase_in_ln_consumption * ((1 - (discount_rate ^ (duration_of_investment - (1 year))))/(ln ( discount_rate)))
 percent_of_investment_returned_when_benefits_end = 0.2
-pv_of_last_year = (ln ((baseline_consumption_per_capita + amount_invested * ( percent_of_transfers_invested + return_on_investment)) / baseline_consumption_per_capita)) / (discount_rate ^ duration_of_investment)
+pv_of_last_year = ((ln ((baseline_consumption_per_capita + amount_invested * ( percent_of_transfers_invested + return_on_investment)) / baseline_consumption_per_capita)) / (discount_rate ^ duration_of_investment)) * (1 year)
 total_pv_increase = pv_of_last_year + pv_of_investment + immediate_increase_of_consumption
 discount_for_potential_negative_spillover = 0.05
 total_pv_after_spillover = (1 - discount_for_potential_negative_spillover) * total_pv_increase
@@ -26,5 +26,5 @@ total_increase_ln_consumption_per_household = total_pv_after_spillover * average
 
 number_of_transfers_made = total_funding_available / total_transfer_size
 total_units_of_ln_consumption = number_of_transfers_made * total_increase_ln_consumption_per_household
-value_of_ln_consumption = 1.44 value people-1 year-1
+value_of_ln_consumption = 1.44 value person-1 year-1
 total_units_of_value = value_of_ln_consumption * total_units_of_ln_consumption
