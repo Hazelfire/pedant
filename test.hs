@@ -300,9 +300,19 @@ main = do
               forM_ (List.reverse (OMap.assocs $ executeProgram OMap.empty a)) $ \(name, value) ->
                 putStrLn $ name  ++ " = "++ show value
             Left err@(TypeError (PositionData offset) _) -> do
-              let initialPosState = PosState contents 0 (initialPos name) (mkPos 4) ""
-                  (_, posState)= attachSourcePos id [offset] initialPosState
-                  error = ParseErrorBundle (FancyError 0 (Set.singleton (ErrorCustom err)) :| [] ) posState
+              let initialPosState = 
+                    PosState
+                      { pstateInput = contents,
+                        pstateOffset = 0,
+                        pstateSourcePos = initialPos name,
+                        pstateTabWidth = defaultTabWidth,
+                        pstateLinePrefix = ""
+                      }
+                  ([(a, sourcePos)], posState)= attachSourcePos id [offset] initialPosState
+                  newPosState = initialPosState { pstateSourcePos = sourcePos, pstateInput = contents, pstateOffset = 0}
+                  error = ParseErrorBundle (FancyError offset (Set.singleton (ErrorCustom err)) :| [] ) newPosState
+              print offset
+              print sourcePos
               putStrLn (errorBundlePretty error)
         Left b -> fail (errorBundlePretty b)
 
@@ -311,6 +321,7 @@ data TypeError = TypeError PositionData String
 
 instance ShowErrorComponent TypeError where
   showErrorComponent (TypeError _ err) = err
+  errorComponentLen _ = 1 
 
 typeCheck :: Map.Map String Dimension -> [Assignment] -> Either TypeError Bool
 typeCheck values ((Assignment name expr): rest) =
