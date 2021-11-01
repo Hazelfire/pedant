@@ -1,5 +1,5 @@
 donation_size = 100000 usd
-transfers_of_cost = 0.8
+transfers_of_cost = 0.83
 total_funding_available = transfers_of_cost * donation_size
 total_transfer_size = 1000 usd
 average_household_size = 4.7 people
@@ -9,18 +9,18 @@ percent_of_transfers_invested = 0.39
 amount_invested = percent_of_transfers_invested * size_of_transfer_per_people
 duration_of_initial_consumption = 1 years
 consumption_possible_by_funds = (1 - percent_of_transfers_invested) * size_of_transfer_per_people / duration_of_initial_consumption
-return_on_investment = 0.10
+return_on_investment = 0.10 years-1
 annual_increase_consumption_by_roi = return_on_investment * amount_invested
 
 baseline_consumption_per_capita = 285.92 usd people-1 years-1
-immediate_increase_of_consumption = ln((consumption_possible_by_funds + baseline_consumption_per_capita) /consumption_possible_by_funds) * duration_of_initial_consumption
-future_increase_in_ln_consumption = ln((consumption_possible_by_funds + baseline_consumption_per_capita) / consumption_possible_by_funds)
+immediate_increase_of_consumption = ln((consumption_possible_by_funds + baseline_consumption_per_capita) /baseline_consumption_per_capita) * duration_of_initial_consumption
+future_increase_in_ln_consumption = ln((annual_increase_consumption_by_roi + baseline_consumption_per_capita) / baseline_consumption_per_capita)
 discount_rate = 1.04 ^years-1
 duration_of_investment = 10 years
-pv_of_investment = future_increase_in_ln_consumption * ((1 - (discount_rate ^ (duration_of_investment - (1 years))))/(ln (discount_rate)))
-percent_of_investment_returned_when_benefits_end = 0.2
+pv_of_investment = future_increase_in_ln_consumption * (1 - (discount_rate ^ (-(duration_of_investment - (1 years)))))/(ln discount_rate)
+percent_of_investment_returned = 0.2
 duration_of_end_of_benefits = 1 years
-pv_of_last_years = ((ln ((baseline_consumption_per_capita + amount_invested * ( percent_of_transfers_invested + return_on_investment) / duration_of_end_of_benefits) / baseline_consumption_per_capita)) / (discount_rate ^ duration_of_investment)) * duration_of_end_of_benefits
+pv_of_last_years = ((ln ((baseline_consumption_per_capita + amount_invested * ( percent_of_investment_returned /duration_of_end_of_benefits + return_on_investment)) / baseline_consumption_per_capita)) / (discount_rate ^ duration_of_investment)) * duration_of_end_of_benefits
 total_pv_increase = pv_of_last_years + pv_of_investment + immediate_increase_of_consumption
 discount_for_potential_negative_spillover = 0.05
 total_pv_after_spillover = (1 - discount_for_potential_negative_spillover) * total_pv_increase
@@ -30,3 +30,26 @@ number_of_transfers_made = total_funding_available / total_transfer_size
 total_units_of_ln_consumption = number_of_transfers_made * total_increase_ln_consumption_per_household
 value_of_ln_consumption = 1.44 value people-1 years-1
 total_units_of_value = value_of_ln_consumption * total_units_of_ln_consumption
+
+percent_of_cash_benefits_from_short_term = immediate_increase_of_consumption / total_pv_increase
+percent_of_cash_benefits_from_long_term = (pv_of_last_years + pv_of_investment)  / total_pv_increase
+
+// Downside Adjustments
+risk_of_cash_not_reach_participants = 0.03
+
+risk_of_within_org_fungibility = 0.05
+
+downside_adjustment_factor = 1 - risk_of_within_org_fungibility - risk_of_cash_not_reach_participants
+value_after_downsides = downside_adjustment_factor * total_units_of_value
+
+// Downside effects
+changes_in_ppp = -0.07
+developmental_effects = 0.05
+reduced_morbidity = 0.04
+child_mortality_effects = 0.04
+
+total_adjustment_factor = 1 + changes_in_ppp + developmental_effects + reduced_morbidity + child_mortality_effects
+
+// After adjustments
+total_value_after_adjustments = total_units_of_value * total_adjustment_factor * downside_adjustment_factor
+total_value_after_adjustments_per_dollar = total_value_after_adjustments / donation_size
