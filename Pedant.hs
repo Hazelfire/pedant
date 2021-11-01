@@ -249,7 +249,7 @@ pLine = choice
   ]
 
 program :: Parser [Assignment]
-program =  catMaybes <$> many (pLine <* newline) <* eof
+program =  catMaybes <$> many (sc *> pLine <* newline) <* eof
 
 pAssignment :: Parser Assignment
 pAssignment = do
