@@ -40,10 +40,14 @@ instance Floating TypedNumber where
     pi = dimensionless pi
     exp = const $ InvalidTypedNumber "Cannot find exponential"
     log a@(TypedNumber x dim) =
-      if isDimensionless a then
-        TypedNumber (log x) dim
-      else
-        InvalidTypedNumber "Cannot find log of dimensionful quantity"
+      case dim of
+        PowDim y ->
+          TypedNumber (log x) (NormDim y)
+        NormDim _ -> 
+          if isDimensionless a then
+            TypedNumber (log x) dim
+          else
+            InvalidTypedNumber "Cannot find log of dimensionful quantity"
     log x = x
     sqrt = const $ InvalidTypedNumber "Cannot find sqrt"
     (TypedNumber a (PowDim powDim)) ** (TypedNumber b typeDim) = either (const $ InvalidTypedNumber "Cannot multiply powers") (TypedNumber (a ** b)) (dimMult (NormDim powDim) typeDim)
