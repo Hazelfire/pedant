@@ -1,0 +1,134 @@
+percent_of_funding_allocated = [ 0.2, 0.2, 0.2, 0.2, 0.2 ]
+percentage_of_total_cost_covered_by_amf = [ 0.463366436660079, 0.523185480024128, 0.493797334236766, 0.537510479303246, 0.505974655790821 ]
+percentage_of_total_cost_covered_by_other_philanthropy = [ 0.0308772754273122, 0, 0, 0, 0 ]
+
+donation_size_to_amf = [ 20000 usd, 20000 usd, 20000 usd, 20000 usd, 20000 usd ]
+
+total_spending_all_contributors = donation_size_to_amf / percentage_of_total_cost_covered_by_amf
+cost_per_llin = [ 5.54028684170494 usd nets-1, 4.49727990174396 usd nets-1, 4.85803649068832 usd nets-1, 4.29279767509372 usd nets-1, 5.35221114333387 usd nets-1 ]
+people_covered_from_nets = 1.8 people nets-1
+cost_per_person_covered = cost_per_llin / people_covered_from_nets
+total_number_of_people_covered = total_spending_all_contributors / cost_per_person_covered
+
+// Population
+percent_of_population_under_5 = [ 13629465.1519444 / 87670443.7766788, 2143394.87689442 / 12643148.9336671, 1114855.20710404 / 7921526.58517355, 7089749.81596238 / 41117856.2413241, 33521637.830718 / 214823785.7115 ]
+percent_of_population_5_to_9 = [ 12763832.6557654/87670443.7766788, 1933404.91137462 / 12643148.9336671, 1074824.79732476 / 7921526.58517355, 6314355.69254718/41117856.2413241, 31315804.4739165 / 214823785.7115 ]
+percent_of_population_10_to_14 = [ 11301847.5012717 / 87670443.7766788, 1636389.58910505 / 12643148.9336671, 957955.990123928 / 7921526.58517355, 5673366.42359162 / 41117856.2413241, 28910632.0515107 / 214823785.7115 ]
+percent_of_population_5_to_14 = percent_of_population_5_to_9 + percent_of_population_10_to_14
+
+children_under_5_covered = total_number_of_people_covered * percent_of_population_under_5
+children_between_5_to_14_covered = total_number_of_people_covered * percent_of_population_5_to_14
+
+equivalent_coverage_years_for_llin = [2.11*(1-0.173704447529312), 2.11, 2.11, 2.11, 2.11 ]
+
+person_years_of_coverage_under_5 = equivalent_coverage_years_for_llin * children_under_5_covered
+person_years_of_coverage_5_to_14 = equivalent_coverage_years_for_llin * children_between_5_to_14_covered 
+person_years_of_coverage_under_15 = person_years_of_coverage_under_5 + person_years_of_coverage_5_to_14 
+
+risk_of_death_averted_under_5 = 0.17
+baseline_under_5_mortality_amf_countries = [ 24.27862218, 26.20755637, 17.7483628774233, 19.9594475483085, 30.3436759585857 ]
+under_5_mortality_amf_countries = [ 7.741741232, 14.600538209998, 8.27977451508132, 7.30501792233482, 15.0472190771806 ]
+mortality_decrease = under_5_mortality_amf_countries / baseline_under_5_mortality_amf_countries
+portion_attributed_to_nets = 0.25
+
+counterfactual_mortality = under_5_mortality_amf_countries + baseline_under_5_mortality_amf_countries * (1 - mortality_decrease) * portion_attributed_to_nets
+
+adjustment_for_net_coverage_years_lost_previous_distributions = [ 0.97, 0.97, 0.97, 0.97, 0.98 ]
+
+// Other Adjustments
+net_use_adjustment = 0.9
+internal_validity_adjustment = 0.95
+external_validity_adjustment = 0.95
+
+portion_attributed_to_malaria = [ 1.80049262480695, 1.24496223958352, 1.01165861903982, 1.52840683916445, 0.949907345167584 ]
+
+efficacy_reduction_due_to_insectiside_resistance = [ 0.0517082573721674, 0.316487728760146, 0.2791928529, 0.2482803052, 0.01466377341 ]
+
+deaths_averted_per_thousand_years = risk_of_death_averted_under_5 * counterfactual_mortality * adjustment_for_net_coverage_years_lost_previous_distributions *portion_attributed_to_malaria * net_use_adjustment * internal_validity_adjustment * external_validity_adjustment * (1 - efficacy_reduction_due_to_insectiside_resistance)
+
+total_number_under_5_deaths_averted = (person_years_of_coverage_under_5 / 1000) * deaths_averted_per_thousand_years
+
+value_assigned_to_averting_death_of_an_individual_under_5 = 117
+total_units_of_value_under_5 = value_assigned_to_averting_death_of_an_individual_under_5 * total_number_under_5_deaths_averted
+
+number_of_malaria_deaths_per_year = [ 57160.15, 11336.5, 5436.19, 22586.59, 191106.09 ]
+number_of_malaria_deaths_under_5 = [ 44077.95, 8181.1, 1880.41, 17385.77, 95636.13 ]
+number_of_malaria_deaths_over_5 = number_of_malaria_deaths_per_year - number_of_malaria_deaths_under_5
+
+ratio_of_over_to_under_5_malaria_deaths = number_of_malaria_deaths_over_5 / number_of_malaria_deaths_under_5
+
+relative_efficacy_for_mortality_over_5 = 0.8
+
+total_over_5_deaths_averted = relative_efficacy_for_mortality_over_5 * ratio_of_over_to_under_5_malaria_deaths * total_number_under_5_deaths_averted
+
+value_averting_death_over_5 = 83
+total_units_value_over_5_deaths_averted = value_averting_death_over_5 * total_over_5_deaths_averted
+
+total_deaths_averted = total_over_5_deaths_averted + total_number_under_5_deaths_averted
+
+reduction_in_malaria_under_5 = 0.45
+expected_reduction_in_malaria = reduction_in_malaria_under_5 * adjustment_for_net_coverage_years_lost_previous_distributions * net_use_adjustment * internal_validity_adjustment * external_validity_adjustment *portion_attributed_to_malaria *(1 - efficacy_reduction_due_to_insectiside_resistance)
+
+malaria_prevalence_under_5 = [ 28309.33, 33757.61, 30426.94, 38599.14, 21795.84 ] / 100000
+malaria_prevalence_5_to_9 = [ 31278.98, 37364.59, 33589.94, 0.43, 0.24 ] / 100000
+malaria_prevalence_10_to_14 = [ 29161.94, 34825.88, 31313.64, 39785.54, 22203.43 ] / 100000
+malaria_prevalence_5_to_14 = [ 30284.77, 36200.85, 32517.22, 41325.53, 23114.47] / 100000
+expected_increase_in_malaria_prevalence_in_absense_of_amf = 0.2
+counterfactual_malaria_prevalence_under_5 = malaria_prevalence_under_5 * (1 + expected_increase_in_malaria_prevalence_in_absense_of_amf)
+counterfactual_malaria_prevalence_5_to_14 = malaria_prevalence_5_to_14 * (1 + expected_increase_in_malaria_prevalence_in_absense_of_amf)
+
+percentage_point_reduction_in_probability_of_a_covered_child_infected_under_5 = expected_reduction_in_malaria * counterfactual_malaria_prevalence_under_5
+percentage_point_reduction_in_probability_of_a_covered_child_infected_5_to_14 = expected_reduction_in_malaria * counterfactual_malaria_prevalence_5_to_14
+
+reduction_in_people_infected_under_5 = person_years_of_coverage_under_5 * percentage_point_reduction_in_probability_of_a_covered_child_infected_under_5
+reduction_in_people_infected_5_to_14 = person_years_of_coverage_5_to_14 * percentage_point_reduction_in_probability_of_a_covered_child_infected_5_to_14
+
+increase_in_income_from_reducing_malaria = 0.023
+additional_replicability_adjustment = 0.52
+adjusted_increase_in_ln_income = (ln (1 + increase_in_income_from_reducing_malaria) - ln 1) * additional_replicability_adjustment
+
+average_number_of_years_between_nets_distributed_and_benefits = 10
+discount_rate = 1.04
+benefit_on_one_years_income = adjusted_increase_in_ln_income / (discount_rate) ^ average_number_of_years_between_nets_distributed_and_benefits
+duration_of_long_term_benefit = 40
+pv_of_lifetime_benefits = benefit_on_one_years_income * (1 - (discount_rate ^ (-duration_of_long_term_benefit))) / (ln discount_rate)
+multiplier_for_resource_sharing_within_households = 2
+
+pv_of_benefits_from_reducing_malaria = multiplier_for_resource_sharing_within_households * pv_of_lifetime_benefits
+
+total_units_of_increase_in_ln_income_under_5 = reduction_in_people_infected_under_5 * pv_of_benefits_from_reducing_malaria
+total_units_of_increase_in_ln_income_5_to_14 = reduction_in_people_infected_5_to_14 * pv_of_benefits_from_reducing_malaria
+
+value_per_ln_consumption = 1.44
+total_units_of_value_increase_consumption = value_per_ln_consumption * (total_units_of_increase_in_ln_income_under_5 + total_units_of_increase_in_ln_income_5_to_14)
+
+total_units_of_value = total_units_of_value_increase_consumption + total_units_value_over_5_deaths_averted + total_units_of_value_under_5
+
+risk_of_double_treatment = 0
+risk_of_ineffective_goods = 0
+ris_of_goods_not_reaching_recipients = 0.05
+total_waste_risk = risk_of_double_treatment + risk_of_ineffective_goods + ris_of_goods_not_reaching_recipients
+
+risk_misappropriation_without_monitoring = 0.02
+risk_false_monitoring_results = 0.02
+total_adjustment_monitoring = risk_misappropriation_without_monitoring + risk_false_monitoring_results
+
+total_downside_adjustment = 1 - total_adjustment_monitoring - total_waste_risk
+
+total_units_of_value_generated_after_downside = total_downside_adjustment * total_units_of_value
+
+malaria_morbidity = 0.09
+short_term_anemia_effects = 0.09
+prevent_of_diseases_other_than_malaria = 0.02
+preventation_of_stillbirths = 0.09
+investment_of_income_increases = 0.03
+rebound_effects = -0.04
+treatment_cost_from_prevention = 0.06
+subnational_adjustments = 0.02
+marginal_funding_goes_to_lower_priority = -0.05
+mosquito_insecticide_resistance_in_trials = 0.05
+differences_in_mosquito_species = -0.02
+adjustment_for_program_impact = [ -0.41, 0, 0, 0, -0.35 ]
+total_adjustment_factors_excluded = 1 + malaria_morbidity + short_term_anemia_effects + prevent_of_diseases_other_than_malaria + preventation_of_stillbirths + investment_of_income_increases + rebound_effects + treatment_cost_from_prevention + subnational_adjustments + marginal_funding_goes_to_lower_priority + mosquito_insecticide_resistance_in_trials + differences_in_mosquito_species + adjustment_for_program_impact
+
+total_units_of_value_after_excluded_adjustments = total_adjustment_factors_excluded * total_units_of_value_generated_after_downside
