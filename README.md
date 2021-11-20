@@ -113,7 +113,7 @@ discount_rate = 1.04 ^year-1
 There are only two valid places you can put a variable with a power dimension, in a logarithm, or the base of an exponential. For instance:
 
 ```pedant
-value = start_value * (discount_rate ^ (-(3 year))
+value = start_value * (discount_rate ^ (-3 year))
 ```
 
 In this case, the dimension of the discount_rate and the exponent multiply together, being `year-1` and `year`, so they cancel each other out.
