@@ -2,7 +2,13 @@ percent_of_funding_allocated = [ 0.2, 0.2, 0.2, 0.2, 0.2 ]
 percentage_of_total_cost_covered_by_amf = [ 0.463366436660079, 0.523185480024128, 0.493797334236766, 0.537510479303246, 0.505974655790821 ]
 percentage_of_total_cost_covered_by_other_philanthropy = [ 0.0308772754273122, 0, 0, 0, 0 ]
 
-donation_size_to_amf = [ 20000 usd, 20000 usd, 20000 usd, 20000 usd, 20000 usd ]
+donation_size_to_amf = 
+  [ 20000 usd
+  , 20000 usd
+  , 20000 usd
+  , 20000 usd
+  , 20000 usd 
+  ]
 
 total_spending_all_contributors = donation_size_to_amf / percentage_of_total_cost_covered_by_amf
 cost_per_llin = [ 5.54028684170494 usd nets-1, 4.49727990174396 usd nets-1, 4.85803649068832 usd nets-1, 4.29279767509372 usd nets-1, 5.35221114333387 usd nets-1 ]
@@ -11,7 +17,8 @@ cost_per_person_covered = cost_per_llin / people_covered_from_nets
 total_number_of_people_covered = total_spending_all_contributors / cost_per_person_covered
 
 // Population
-percent_of_population_under_5 = [ 13629465.1519444 / 87670443.7766788, 2143394.87689442 / 12643148.9336671, 1114855.20710404 / 7921526.58517355, 7089749.81596238 / 41117856.2413241, 33521637.830718 / 214823785.7115 ]
+percent_of_population_under_5 = 
+  [ 13629465.1519444 / 87670443.7766788, 2143394.87689442 / 12643148.9336671, 1114855.20710404 / 7921526.58517355, 7089749.81596238 / 41117856.2413241, 33521637.830718 / 214823785.7115 ]
 percent_of_population_5_to_9 = [ 12763832.6557654/87670443.7766788, 1933404.91137462 / 12643148.9336671, 1074824.79732476 / 7921526.58517355, 6314355.69254718/41117856.2413241, 31315804.4739165 / 214823785.7115 ]
 percent_of_population_10_to_14 = [ 11301847.5012717 / 87670443.7766788, 1636389.58910505 / 12643148.9336671, 957955.990123928 / 7921526.58517355, 5673366.42359162 / 41117856.2413241, 28910632.0515107 / 214823785.7115 ]
 percent_of_population_5_to_14 = percent_of_population_5_to_9 + percent_of_population_10_to_14

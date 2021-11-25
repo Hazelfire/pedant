@@ -71,7 +71,7 @@ typeCheckExpression values (PositionedExpression pos expression) =
               Left $ TypeError pos $ "Count not take log of " ++ show xdim ++ " must be power type or dimensionless"
         PBinOp App (PositionedExpression _ (PVariable name)) x ->
           Left $ TypeError pos "No such function"
-        PBinOp App (PositionedExpression _ (PConstant val)) x -> Left . TypeError pos $ "Cannot evaluate constant"
+        PBinOp App (PositionedExpression _ (PConstant val)) x -> Left . TypeError pos $ "Constants can not be used as functions"
         PBinOp App (PositionedExpression _ (PNegate val)) x -> Left . TypeError pos $ "Cannot apply negation"
         PBinOp App _ x -> Left . TypeError pos $ "Could not evalute function"
         PVariable name ->

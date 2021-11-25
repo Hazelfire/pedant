@@ -64,6 +64,9 @@ sc =
 lexeme :: Parser a -> Parser a
 lexeme = L.lexeme sc
 
+foldLexeme :: Parser a -> Parser a
+foldLexeme = L.lexeme scn
+
 symbol :: Text -> Parser Text
 symbol = L.symbol sc
 
@@ -77,36 +80,36 @@ parens :: Parser a -> Parser a
 parens = between (symbol "(") (symbol ")")
 
 pVariable :: Parser PositionedExpression
-pVariable = PositionedExpression <$> getPositionData <*> (PVariable <$> lexeme pName)
+pVariable = PositionedExpression <$> getPositionData <*> (PVariable <$> pName)
 
 getPositionData :: Parser PositionData
 getPositionData = PositionData <$> getOffset
 
-pTypedNumber :: Parser TypedExpression
-pTypedNumber = do
-  num <- lexeme (try L.float <|> L.decimal)
-  TypedNumber num <$> parseDimension
+pTypedNumber :: Parser () -> Parser TypedExpression
+pTypedNumber sc' = do
+  num <- L.lexeme sc (try L.float <|> L.decimal)
+  TypedNumber num <$> parseDimension sc'
 
-pTypedList :: Parser TypedExpression
-pTypedList = do
-  _ <- lexeme (char '[')
+pTypedList :: Parser () -> Parser TypedExpression
+pTypedList sc' = do
+  _ <- L.lexeme sc' (char '[')
   TypedList <$> startList
   where
     startList :: Parser [PositionedExpression]
     startList = do
-      num <- pExpr
-      rest <- ([] <$ lexeme (char ']')) <|> (lexeme (char ',') >> startList)
+      num <- L.lexeme sc' $ pExpr sc'
+      rest <- ([] <$ L.lexeme sc' (char ']')) <|> (L.lexeme sc' (char ',') >> startList)
       return (num : rest)
 
-parseDimension :: Parser Dimension
-parseDimension = (PowDim <$> try (char '^' *> parseNextDim Map.empty)) <|> (NormDim <$> pLoop Map.empty)
+parseDimension :: Parser () -> Parser Dimension
+parseDimension sc' = (PowDim <$> try (char '^' *> parseNextDim Map.empty)) <|> (NormDim <$> pLoop Map.empty)
   where
     pLoop :: Map.Map String Int -> Parser (Map.Map String Int)
     pLoop p = parseNextDim p <|> return p
 
     parseNextDim :: Map.Map String Int -> Parser (Map.Map String Int)
     parseNextDim oldDim = do
-      (name, power) <- lexeme pSingleDim
+      (name, power) <- L.lexeme sc' pSingleDim
       pLoop (Map.insert name power oldDim)
 
     pSingleDim :: Parser (String, Int)
@@ -115,18 +118,18 @@ parseDimension = (PowDim <$> try (char '^' *> parseNextDim Map.empty)) <|> (Norm
       number <- (fromInteger <$> L.signed (pure ()) L.decimal) <|> return 1
       return (name, number)
 
-pConstant :: Parser PositionedExpression
-pConstant = PositionedExpression <$> getPositionData <*> (PConstant <$> (pTypedList <|> pTypedNumber))
+pConstant :: Parser () -> Parser PositionedExpression
+pConstant sc' = PositionedExpression <$> getPositionData <*> (PConstant <$> (pTypedList sc' <|> pTypedNumber sc'))
 
 pName :: Parser String
-pName = (:) <$> letterChar <*> many (alphaNumChar <|> char '_') <?> "variable"
+pName = (:) <$> letterChar <*> many (alphaNumChar <|> char '_') <?> "name"
 
-pTerm :: Parser PositionedExpression
-pTerm =
+pTerm :: Parser () -> Parser PositionedExpression
+pTerm sc' =
   choice
-    [ parens pExpr,
-      pVariable,
-      pConstant
+    [ parens (pExpr sc'),
+      L.lexeme sc' pVariable,
+      pConstant sc'
     ]
 
 pLine :: Parser (Maybe Assignment)
@@ -140,13 +143,23 @@ program :: Parser [Assignment]
 program = catMaybes <$> many (sc *> pLine <* newline) <* eof
 
 pAssignment :: Parser Assignment
-pAssignment = do
+pAssignment = L.lineFold scn $ \sc' -> do
   name <- lexeme pName
   _ <- symbol "="
-  Assignment name <$> pExpr
+  let new_space_consumer = try sc' <|> sc
+  new_space_consumer
+  Assignment name <$> pExpr new_space_consumer
 
-pExpr :: Parser PositionedExpression
-pExpr = makeExprParser pTerm operatorTable
+scn :: Parser ()
+scn =
+  L.space
+    space1
+    (L.skipLineComment "//")
+    (L.skipBlockComment "/*" "*/")
+
+pExpr :: Parser () -> Parser PositionedExpression
+pExpr sc' =
+  makeExprParser (pTerm sc') operatorTable
 
 operatorTable :: [[Operator Parser PositionedExpression]]
 operatorTable =
