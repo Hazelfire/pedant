@@ -1,3 +1,4 @@
+unit usd people years value
 donation_size = 100000 usd
 transfers_of_cost = 0.83
 total_funding_available = transfers_of_cost * donation_size
@@ -8,16 +9,23 @@ size_of_transfer_per_people = total_transfer_size / average_household_size
 percent_of_transfers_invested = 0.39
 amount_invested = percent_of_transfers_invested * size_of_transfer_per_people
 duration_of_initial_consumption = 1 years
-consumption_possible_by_funds = (1 - percent_of_transfers_invested) * size_of_transfer_per_people / duration_of_initial_consumption
+consumption_possible_by_funds = 
+  (1 - percent_of_transfers_invested) * 
+  size_of_transfer_per_people / 
+  duration_of_initial_consumption
 return_on_investment = 0.10 years-1
 annual_increase_consumption_by_roi = return_on_investment * amount_invested
 
 baseline_consumption_per_capita = 285.92 usd people-1 years-1
-immediate_increase_of_consumption = ln((consumption_possible_by_funds + baseline_consumption_per_capita) /baseline_consumption_per_capita) * duration_of_initial_consumption
-future_increase_in_ln_consumption = ln((annual_increase_consumption_by_roi + baseline_consumption_per_capita) / baseline_consumption_per_capita)
+immediate_increase_of_consumption = 
+  ln((consumption_possible_by_funds + baseline_consumption_per_capita) / baseline_consumption_per_capita) *
+  duration_of_initial_consumption
+future_increase_in_ln_consumption = ln((annual_increase_consumption_by_roi + baseline_consumption_per_capita) / 
+  baseline_consumption_per_capita)
 discount_rate = 1.04 ^years-1
 duration_of_investment = 10 years
-pv_of_investment = future_increase_in_ln_consumption * (1 - (discount_rate ^ (-(duration_of_investment - (1 years)))))/(ln discount_rate)
+pv_of_investment = future_increase_in_ln_consumption * (1 - (discount_rate ^ (-(duration_of_investment - (1 years)))))/
+  (ln discount_rate)
 percent_of_investment_returned = 0.2
 duration_of_end_of_benefits = 1 years
 pv_of_last_years = ((ln ((baseline_consumption_per_capita + amount_invested * ( percent_of_investment_returned /duration_of_end_of_benefits + return_on_investment)) / baseline_consumption_per_capita)) / (discount_rate ^ duration_of_investment)) * duration_of_end_of_benefits

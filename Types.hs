@@ -2,6 +2,7 @@ module Types
   ( Dimension (..),
     Operation (..),
     baseDimension,
+    baseUnits,
     dimensionless,
     ExecutionExpression (..),
     PedantParseError (..),
@@ -15,6 +16,7 @@ where
 
 import qualified Data.List as List
 import qualified Data.Map as Map
+import qualified Data.Set as Set
 
 -- | Defining a shallow embedding for a typed number.
 --   A typed number is a number with units. It must follow
@@ -112,6 +114,11 @@ dimMult x y = Left $ "Cannot multiply " ++ show x ++ " to " ++ show y
 
 dimNone :: Dimension
 dimNone = NormDim Map.empty
+
+baseUnits :: Dimension -> Set.Set String
+baseUnits (NormDim a) = Set.fromList (Map.keys a)
+baseUnits (PowDim a) = Set.fromList (Map.keys a)
+baseUnits (ListDim a) = baseUnits a
 
 instance Show NumericValue where
   show (NumberValue val) = show val

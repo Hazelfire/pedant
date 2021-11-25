@@ -10,6 +10,7 @@ module Parser
     PositionData (..),
     ParseExpression (..),
     Assignment (..),
+    Statement (..),
   )
 where
 
@@ -30,6 +31,10 @@ import Types (Dimension (..), Operation (..), PedantParseError (..))
 -- | We now define a parser for this typed language
 data Assignment = Assignment String PositionedExpression
   deriving (Show)
+
+data Statement
+  = AssignmentStatement Assignment
+  | UnitStatement [String]
 
 newtype PositionData = PositionData Int
   deriving (Show, Eq, Ord)
@@ -132,23 +137,32 @@ pTerm sc' =
       pConstant sc'
     ]
 
-pLine :: Parser (Maybe Assignment)
+pLine :: Parser (Maybe Statement)
 pLine =
   choice
-    [ Just <$> pAssignment,
+    [ Just <$> pStatement,
       return Nothing
     ]
 
-program :: Parser [Assignment]
+program :: Parser [Statement]
 program = catMaybes <$> many (sc *> pLine <* newline) <* eof
 
-pAssignment :: Parser Assignment
-pAssignment = L.lineFold scn $ \sc' -> do
+pStatement :: Parser Statement
+pStatement = L.lineFold scn $ \sc' ->
+  let new_space_consumer = try sc' <|> sc
+   in pUnit new_space_consumer <|> (AssignmentStatement <$> pAssignment new_space_consumer)
+
+pUnit :: Parser () -> Parser Statement
+pUnit sc' = do
+  L.lexeme sc (symbol "unit")
+  UnitStatement <$> (pName `sepBy1` sc)
+
+pAssignment :: Parser () -> Parser Assignment
+pAssignment sc' = do
   name <- lexeme pName
   _ <- symbol "="
-  let new_space_consumer = try sc' <|> sc
-  new_space_consumer
-  Assignment name <$> pExpr new_space_consumer
+  sc'
+  Assignment name <$> pExpr sc'
 
 scn :: Parser ()
 scn =
@@ -214,6 +228,6 @@ errorBundleToPedantError bundle =
         )
         (bundleErrors bundle)
 
-parseProgram :: String -> T.Text -> Either (NonEmpty PedantParseError) [Assignment]
+parseProgram :: String -> T.Text -> Either (NonEmpty PedantParseError) [Statement]
 parseProgram name contents = do
   Bifunctor.first errorBundleToPedantError $ parse program name contents

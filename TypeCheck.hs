@@ -13,43 +13,54 @@ import Types
 
 data TypeError = TypeError PositionData String
 
-typeCheck :: OMap.OMap String (Dimension, ExecutionExpression) -> [Assignment] -> Either TypeError (OMap.OMap String (Dimension, ExecutionExpression))
-typeCheck values ((Assignment name expr) : rest) =
-  case typeCheckExpression values expr of
-    Left err -> Left err
-    Right value -> typeCheck ((name, value) |< values) rest
-typeCheck values [] = Right values
+data TypeCheckState = TypeCheckState
+  { tcsVariables :: OMap.OMap String (Dimension, ExecutionExpression),
+    tcsUnits :: Set.Set String
+  }
 
-typeCheckExpression :: OMap.OMap String (Dimension, ExecutionExpression) -> PositionedExpression -> Either TypeError (Dimension, ExecutionExpression)
-typeCheckExpression values (PositionedExpression pos expression) =
+emptyTypeCheckState :: TypeCheckState
+emptyTypeCheckState = TypeCheckState OMap.empty Set.empty
+
+typeCheck :: TypeCheckState -> [Statement] -> Either TypeError TypeCheckState
+typeCheck tcState (statement : rest) =
+  case statement of
+    UnitStatement units -> typeCheck (tcState {tcsUnits = Set.union (tcsUnits tcState) (Set.fromList units)}) rest
+    AssignmentStatement (Assignment name expr) ->
+      case typeCheckExpression tcState expr of
+        Left err -> Left err
+        Right value -> typeCheck (tcState {tcsVariables = (name, value) |< tcsVariables tcState}) rest
+typeCheck tcState [] = Right tcState
+
+typeCheckExpression :: TypeCheckState -> PositionedExpression -> Either TypeError (Dimension, ExecutionExpression)
+typeCheckExpression tcState (PositionedExpression pos expression) =
   let toTypeError = Bifunctor.first (TypeError pos)
    in case expression of
         PBinOp Mult x y -> do
-          (xdim, xnum) <- typeCheckExpression values x
-          (ydim, ynum) <- typeCheckExpression values y
+          (xdim, xnum) <- typeCheckExpression tcState x
+          (ydim, ynum) <- typeCheckExpression tcState y
           dimension <- toTypeError (dimMult xdim ydim)
           return (dimension, EBinOp Mult xnum ynum)
         PBinOp Div x y -> do
-          (xdim, xnum) <- typeCheckExpression values x
-          (ydim, ynum) <- typeCheckExpression values y
+          (xdim, xnum) <- typeCheckExpression tcState x
+          (ydim, ynum) <- typeCheckExpression tcState y
           reciprocated <- toTypeError $ dimRecip ydim
           dimension <- toTypeError (dimMult xdim reciprocated)
           return (dimension, EBinOp Div xnum ynum)
         PBinOp Add x y -> do
-          (xdim, xnum) <- typeCheckExpression values x
-          (ydim, ynum) <- typeCheckExpression values y
+          (xdim, xnum) <- typeCheckExpression tcState x
+          (ydim, ynum) <- typeCheckExpression tcState y
           if baseDimension xdim == baseDimension ydim
             then return (xdim, EBinOp Add xnum ynum)
             else Left . TypeError pos $ "Could not add " ++ show xdim ++ " and " ++ show ydim
         PBinOp Sub x y -> do
-          (xdim, xnum) <- typeCheckExpression values x
-          (ydim, ynum) <- typeCheckExpression values y
+          (xdim, xnum) <- typeCheckExpression tcState x
+          (ydim, ynum) <- typeCheckExpression tcState y
           if baseDimension xdim == baseDimension ydim
             then return (xdim, EBinOp Sub xnum ynum)
             else Left . TypeError pos $ "Could not subtract " ++ show xdim ++ " and " ++ show ydim
         PBinOp Power x y -> do
-          (xdim, xnum) <- typeCheckExpression values x
-          (ydim, ynum) <- typeCheckExpression values y
+          (xdim, xnum) <- typeCheckExpression tcState x
+          (ydim, ynum) <- typeCheckExpression tcState y
           case xdim of
             PowDim childDim -> do
               dimension <- toTypeError $ dimMult (NormDim childDim) ydim
@@ -59,7 +70,7 @@ typeCheckExpression values (PositionedExpression pos expression) =
                 then return (xdim, EBinOp Power xnum ynum)
                 else Left $ TypeError pos $ "Could not power " ++ show xdim ++ " to " ++ show ydim ++ " base needs to be power type"
         PBinOp App (PositionedExpression _ (PVariable "ln")) x -> do
-          (xdim, xnum) <- typeCheckExpression values x
+          (xdim, xnum) <- typeCheckExpression tcState x
           case xdim of
             PowDim childDim ->
               return (NormDim childDim, EBinOp App (EVariable "ln") xnum)
@@ -75,14 +86,18 @@ typeCheckExpression values (PositionedExpression pos expression) =
         PBinOp App (PositionedExpression _ (PNegate val)) x -> Left . TypeError pos $ "Cannot apply negation"
         PBinOp App _ x -> Left . TypeError pos $ "Could not evalute function"
         PVariable name ->
-          case OMap.lookup name values of
+          case OMap.lookup name (tcsVariables tcState) of
             Just (dim, _) ->
               return (dim, EVariable name)
             Nothing -> Left . TypeError pos $ "Could not find variable " ++ name
         PConstant (TypedNumber value dim) ->
-          return (dim, EConstant $ ExecutionValueNumber value)
+          let base = baseUnits dim
+              missingUnits = Set.difference base (tcsUnits tcState)
+           in if Set.size missingUnits == 0
+                then return (dim, EConstant $ ExecutionValueNumber value)
+                else Left $ TypeError pos (concat ["units ", unwords (Set.toList missingUnits), " not declared. Try adding a \"unit ", unwords (Set.toList missingUnits), "\" statement before this line"])
         PConstant (TypedList list) -> do
-          evaluations <- mapM (typeCheckExpression values) list
+          evaluations <- mapM (typeCheckExpression tcState) list
           case evaluations of
             [] -> Left $ TypeError pos "Cannot have empty list"
             (dimension, value) : rest ->
@@ -90,5 +105,5 @@ typeCheckExpression values (PositionedExpression pos expression) =
                 then return (ListDim dimension, EConstant $ ExecutionValueList (value : map snd rest))
                 else Left $ TypeError pos "All items in a list must have the same units"
         PNegate expr -> do
-          (dim, num) <- typeCheckExpression values expr
+          (dim, num) <- typeCheckExpression tcState expr
           return (dim, ENegate num)

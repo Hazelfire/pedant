@@ -54,7 +54,7 @@ getErrors name = do
   contents <- T.pack <$> readFile name
   case parseProgram name contents of
     Right parsed ->
-      case typeCheck OMap.empty parsed of
+      case typeCheck emptyTypeCheckState parsed of
         Right valid ->
           return []
         Left err -> do
@@ -85,9 +85,9 @@ main = do
       contents <- T.pack <$> readFile name
       case parseProgram name contents of
         Right a -> do
-          case typeCheck OMap.empty a of
+          case typeCheck emptyTypeCheckState a of
             Right valid -> do
-              let program = List.reverse $ OMap.assocs (fmap snd valid)
+              let program = List.reverse $ OMap.assocs (fmap snd (tcsVariables valid))
                in case executeProgram OMap.empty program of
                     Right result -> do
                       forM_ (List.reverse (OMap.assocs result)) $ \(name, value) ->

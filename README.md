@@ -15,7 +15,7 @@ in `examples`.
 Each line can either be empty or not have a declaration of a variable on it. The variable is equated to a term:
 
 ```pedant
-donation_size = 100000 usd
+donation_size = 100000
 ```
 
 On the right is the value for that term.
@@ -23,8 +23,14 @@ On the right is the value for that term.
 That value can make up an expression:
 
 ```pedant
-consumption_possible_by_funds = (1 - percent_of_transfers_invested) * size_of_transfer_per_person / duration_of_initial_consumption
+consumption_possible_by_funds = 
+  (1 - percent_of_transfers_invested) 
+  * size_of_transfer_per_person 
+  / duration_of_initial_consumption
 ```
+
+If you want, you can break expressions over multiple lines, with the condition
+that every line within the expression must be indented.
 
 The available operators are:
  - `*` multiplication
@@ -56,12 +62,16 @@ violations.
 If you don't want a dimensional checker, all dimensionless operations are valid.
 Meaning you simply need to not add units to your code.
 
-However, the basics of dimensional checking is that you can assign a type to value,
+However, the basics of dimensional checking is that you can declare a unit and assign a unit to a value,
 such as
 
 ```pedant
+unit person
 average_household_size = 4.7 person
 ```
+
+The "unit person" line declares a unit "person" to be used later, which is then
+used in the next line
 
 This indicates that average_household_size is in units `person`.
 
@@ -72,6 +82,7 @@ The checker is really simple, it basically follows two main rules:
 
 So for instance, the following construction is valid:
 ```pedant
+unit bag apple
 bag_count = bag
 apples_per_bag = apple bag-1
 total_apples = apples_per_bag * bag_count
@@ -79,9 +90,12 @@ total_apples = apples_per_bag * bag_count
 
 as `total_apples` would be of units `apple`.
 
+(Also note that you can put multiple units in the same unit declaration)
+
 But this is invalid:
 
 ```pedant
+unit bag apple
 bag_count = bag
 apples_per_bag = apple bag-1
 total_apples = apples_per_bag + bag_count
@@ -107,6 +121,7 @@ you to take powers of dimensionful quantities.
 A power dimension is a dimension that starts with a `^` character, such as:
 
 ```pedant
+unit year
 discount_rate = 1.04 ^year-1
 ```
 
