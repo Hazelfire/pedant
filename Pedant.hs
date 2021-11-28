@@ -109,24 +109,38 @@ executeProgram values ((name, expr) : rest) =
 executeProgram values [] = Right values
 
 evaluateExpression :: OMap.OMap String NumericValue -> ExecutionExpression -> Either String NumericValue
-evaluateExpression values expression =
+evaluateExpression variables expression =
   case expression of
-    EBinOp Mult x y -> (*) <$> evaluateExpression values x <*> evaluateExpression values y
-    EBinOp Div x y -> (/) <$> evaluateExpression values x <*> evaluateExpression values y
-    EBinOp Add x y -> (+) <$> evaluateExpression values x <*> evaluateExpression values y
-    EBinOp Sub x y -> (-) <$> evaluateExpression values x <*> evaluateExpression values y
-    EBinOp Power x y -> (**) <$> evaluateExpression values x <*> evaluateExpression values y
-    EBinOp App (EVariable "ln") x -> log <$> evaluateExpression values x
+    EBinOp Mult x y -> (*) <$> evaluateExpression variables x <*> evaluateExpression variables y
+    EBinOp Div x y -> (/) <$> evaluateExpression variables x <*> evaluateExpression variables y
+    EBinOp Add x y -> (+) <$> evaluateExpression variables x <*> evaluateExpression variables y
+    EBinOp Sub x y -> (-) <$> evaluateExpression variables x <*> evaluateExpression variables y
+    EBinOp Power x y -> (**) <$> evaluateExpression variables x <*> evaluateExpression variables y
+    EBinOp App (EVariable "ln") x -> log <$> evaluateExpression variables x
     EBinOp App (EVariable name) x -> Left $ "No such function " ++ name
     EBinOp App (EConstant val) x -> Left $ "Cannot call constant " ++ show val
     EBinOp App (EBinOp op x1 x2) x -> Left $ "Cannot call operator " ++ show x1 ++ " " ++ show x2
     EBinOp App (ENegate val) x -> Left $ "Cannot call negation of " ++ show val
+    EBinOp App (EAccess _ val) x -> Left $ "Cannot call access of " ++ show val
+    EAccess x name -> do
+      evaluatedX <- evaluateExpression variables x
+      case evaluatedX of
+        DictValue entries ->
+          case Map.lookup name entries of
+            Just entry -> return entry
+            _ -> Left $ "Cannot access " ++ name
+        _ -> Left $ "Cannot access " ++ name ++ " because not dictionary"
     EVariable name ->
-      case OMap.lookup name values of
+      case OMap.lookup name variables of
         Just value -> return value
         Nothing -> Left $ "Could not find variable " ++ name
     EConstant (ExecutionValueNumber num) -> return (NumberValue num)
+    EConstant (ExecutionValueDict entries) -> do
+      evaluatedEntries <- forM (Map.toList entries) $ \(key, value) -> do
+        evaluatedValue <- evaluateExpression variables value
+        return (key, evaluatedValue)
+      return (DictValue (Map.fromList evaluatedEntries))
     EConstant (ExecutionValueList list) -> do
-      results <- mapM (evaluateExpression values) list
+      results <- mapM (evaluateExpression variables) list
       return (ListValue results)
-    ENegate expr -> negate <$> evaluateExpression values expr
+    ENegate expr -> negate <$> evaluateExpression variables expr

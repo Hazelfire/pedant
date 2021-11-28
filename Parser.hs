@@ -45,6 +45,7 @@ data PositionedExpression = PositionedExpression PositionData ParseExpression
 data TypedExpression
   = TypedNumber Double Dimension
   | TypedList [PositionedExpression]
+  | TypedRecord (Map.Map String PositionedExpression)
   deriving (Show)
 
 data ParseExpression
@@ -52,6 +53,7 @@ data ParseExpression
   | PVariable String
   | PConstant TypedExpression
   | PNegate PositionedExpression
+  | PAccess PositionedExpression String
   deriving (Show)
 
 data Function = NaturalLogarithm
@@ -106,6 +108,19 @@ pTypedList sc' = do
       rest <- ([] <$ L.lexeme sc' (char ']')) <|> (L.lexeme sc' (char ',') >> startList)
       return (num : rest)
 
+pTypedRecord :: Parser () -> Parser TypedExpression
+pTypedRecord sc' = do
+  _ <- L.lexeme sc' (char '{')
+  TypedRecord . Map.fromList <$> startRecord
+  where
+    startRecord :: Parser [(String, PositionedExpression)]
+    startRecord = do
+      name <- L.lexeme sc' pName
+      _ <- L.lexeme sc' $ char '='
+      value <- L.lexeme sc' $ pExpr sc'
+      rest <- ([] <$ L.lexeme sc' (char '}')) <|> (L.lexeme sc' (char ',') >> startRecord)
+      return ((name, value) : rest)
+
 parseDimension :: Parser () -> Parser Dimension
 parseDimension sc' = (PowDim <$> try (char '^' *> parseNextDim Map.empty)) <|> (NormDim <$> pLoop Map.empty)
   where
@@ -124,18 +139,27 @@ parseDimension sc' = (PowDim <$> try (char '^' *> parseNextDim Map.empty)) <|> (
       return (name, number)
 
 pConstant :: Parser () -> Parser PositionedExpression
-pConstant sc' = PositionedExpression <$> getPositionData <*> (PConstant <$> (pTypedList sc' <|> pTypedNumber sc'))
+pConstant sc' = PositionedExpression <$> getPositionData <*> (PConstant <$> (pTypedList sc' <|> pTypedRecord sc' <|> pTypedNumber sc'))
 
 pName :: Parser String
 pName = (:) <$> letterChar <*> many (alphaNumChar <|> char '_') <?> "name"
 
 pTerm :: Parser () -> Parser PositionedExpression
 pTerm sc' =
-  choice
-    [ parens (pExpr sc'),
-      L.lexeme sc' pVariable,
-      pConstant sc'
-    ]
+  let mainExpression =
+        choice
+          [ parens (pExpr sc'),
+            L.lexeme sc' pVariable,
+            pConstant sc'
+          ]
+   in do
+        expression <- mainExpression
+        accessor expression <|> return expression
+  where
+    accessor :: PositionedExpression -> Parser PositionedExpression
+    accessor expr = do
+      _ <- char '.'
+      PositionedExpression <$> getPositionData <*> (PAccess expr <$> L.lexeme sc' pName)
 
 pLine :: Parser (Maybe Statement)
 pLine =
@@ -173,44 +197,44 @@ scn =
 
 pExpr :: Parser () -> Parser PositionedExpression
 pExpr sc' =
-  makeExprParser (pTerm sc') operatorTable
+  makeExprParser (pTerm sc') (operatorTable sc')
 
-operatorTable :: [[Operator Parser PositionedExpression]]
-operatorTable =
-  [ [binary "" (PBinOp App)],
-    [binary "^" (PBinOp Power)],
-    [ prefix "-" PNegate,
-      prefix "+" (\(PositionedExpression _ a) -> a)
+operatorTable :: Parser () -> [[Operator Parser PositionedExpression]]
+operatorTable sc' =
+  [ [binary sc' "" (PBinOp App)],
+    [binary sc' "^" (PBinOp Power)],
+    [ prefix sc' "-" PNegate,
+      prefix sc' "+" (\(PositionedExpression _ a) -> a)
     ],
-    [ binary "*" (PBinOp Mult),
-      binary "/" (PBinOp Div)
+    [ binary sc' "*" (PBinOp Mult),
+      binary sc' "/" (PBinOp Div)
     ],
-    [ binary "+" (PBinOp Add),
-      binary "-" (PBinOp Sub)
+    [ binary sc' "+" (PBinOp Add),
+      binary sc' "-" (PBinOp Sub)
     ]
   ]
 
-binary :: Text -> (PositionedExpression -> PositionedExpression -> ParseExpression) -> Operator Parser PositionedExpression
-binary name f =
+binary :: Parser () -> Text -> (PositionedExpression -> PositionedExpression -> ParseExpression) -> Operator Parser PositionedExpression
+binary sc' name f =
   InfixL
     ( do
-        symbol name
+        L.symbol sc' name
         pos <- getPositionData
         return (\a b -> PositionedExpression pos (f a b))
     )
 
-prefix, postfix :: Text -> (PositionedExpression -> ParseExpression) -> Operator Parser PositionedExpression
-prefix name f =
+prefix, postfix :: Parser () -> Text -> (PositionedExpression -> ParseExpression) -> Operator Parser PositionedExpression
+prefix sc' name f =
   Prefix
     ( do
-        symbol name
+        L.symbol sc' name
         pos <- getPositionData
         return (PositionedExpression pos . f)
     )
-postfix name f =
+postfix sc' name f =
   Postfix
     ( do
-        symbol name
+        L.symbol sc' name
         pos <- getPositionData
         return (PositionedExpression pos . f)
     )

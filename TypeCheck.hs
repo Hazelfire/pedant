@@ -1,6 +1,7 @@
 -- | TypeChecker for Pedant.
 module TypeCheck where
 
+import Control.Monad (forM)
 import qualified Data.Bifunctor as Bifunctor
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import qualified Data.Map as Map
@@ -85,6 +86,30 @@ typeCheckExpression tcState (PositionedExpression pos expression) =
         PBinOp App (PositionedExpression _ (PConstant val)) x -> Left . TypeError pos $ "Constants can not be used as functions"
         PBinOp App (PositionedExpression _ (PNegate val)) x -> Left . TypeError pos $ "Cannot apply negation"
         PBinOp App _ x -> Left . TypeError pos $ "Could not evalute function"
+        PAccess x name -> do
+          (xdim, xnum) <- typeCheckExpression tcState x
+          case xdim of
+            DictDim values ->
+              case Map.lookup name values of
+                Just entry -> do
+                  return (entry, EAccess xnum name)
+                Nothing ->
+                  Left . TypeError pos $
+                    concat
+                      [ "Cannot access ",
+                        name,
+                        " on dictionary of type ",
+                        show xdim
+                      ]
+            _ ->
+              Left . TypeError pos $
+                concat
+                  [ "Cannot access ",
+                    name,
+                    " on type ",
+                    show xdim,
+                    " as it is not a dictionary"
+                  ]
         PVariable name ->
           case OMap.lookup name (tcsVariables tcState) of
             Just (dim, _) ->
@@ -104,6 +129,14 @@ typeCheckExpression tcState (PositionedExpression pos expression) =
               if all ((== dimension) . fst) rest
                 then return (ListDim dimension, EConstant $ ExecutionValueList (value : map snd rest))
                 else Left $ TypeError pos "All items in a list must have the same units"
+        PConstant (TypedRecord record) -> do
+          recordEntries <- forM (Map.toList record) $ \(key, elem) -> do
+            (dimension, value) <- typeCheckExpression tcState elem
+            return (key, (dimension, value))
+
+          let dimension = map (\(key, (dimension, _)) -> (key, dimension)) recordEntries
+              elems = map (\(key, (_, value)) -> (key, value)) recordEntries
+          return (DictDim (Map.fromList dimension), EConstant $ ExecutionValueDict (Map.fromList elems))
         PNegate expr -> do
           (dim, num) <- typeCheckExpression tcState expr
           return (dim, ENegate num)

@@ -25,6 +25,7 @@ data NumericValue
   = NumberValue Double
   | -- | A number and the dimension of the number
     ListValue [NumericValue]
+  | DictValue (Map.Map String NumericValue)
 
 lift2Numeric :: (Double -> Double -> Double) -> NumericValue -> NumericValue -> NumericValue
 lift2Numeric op a b =
@@ -33,12 +34,14 @@ lift2Numeric op a b =
     (NumberValue a, ListValue b) -> ListValue (map (lift2Numeric op $ NumberValue a) b)
     (ListValue a, NumberValue b) -> ListValue (map (\x -> lift2Numeric op x (NumberValue b)) a)
     (ListValue a, ListValue b) -> ListValue (zipWith (lift2Numeric op) a b)
+    (a, _) -> a
 
 liftNumeric :: (Double -> Double) -> NumericValue -> NumericValue
 liftNumeric op a =
   case a of
     NumberValue x -> NumberValue $ op x
     ListValue list -> ListValue (map (liftNumeric op) list)
+    DictValue a -> DictValue a
 
 instance Num NumericValue where
   (*) = lift2Numeric (*)
@@ -77,6 +80,7 @@ data Dimension
   = NormDim (Map.Map String Int)
   | PowDim (Map.Map String Int)
   | ListDim Dimension
+  | DictDim (Map.Map String Dimension)
   deriving (Eq)
 
 dimensionless :: Dimension -> Bool
@@ -94,10 +98,13 @@ instance Show Dimension where
       else "^(" ++ show (NormDim dim) ++ ")"
   show (ListDim dim) =
     "[" ++ show dim ++ "]"
+  show (DictDim dim) =
+    "{" ++ List.intercalate "," (map (\(key, value) -> key ++ ":" ++ show value) (Map.toAscList dim)) ++ "}"
 
 baseDimension :: Dimension -> Dimension
 baseDimension (NormDim a) = NormDim a
 baseDimension (PowDim a) = PowDim a
+baseDimension (DictDim a) = DictDim a
 baseDimension (ListDim a) = a
 
 dimRecip :: Dimension -> Either String Dimension
@@ -119,19 +126,23 @@ baseUnits :: Dimension -> Set.Set String
 baseUnits (NormDim a) = Set.fromList (Map.keys a)
 baseUnits (PowDim a) = Set.fromList (Map.keys a)
 baseUnits (ListDim a) = baseUnits a
+baseUnits (DictDim a) = Set.unions (map baseUnits $ Map.elems a)
 
 instance Show NumericValue where
   show (NumberValue val) = show val
   show (ListValue val) = "[" ++ List.intercalate ", " (map show val) ++ "]"
+  show (DictValue val) = "{" ++ List.intercalate ", " (map (\(key, value) -> key ++ "=" ++ show value) (Map.toAscList val)) ++ "}"
 
 data ExecutionValue
   = ExecutionValueNumber Double
   | ExecutionValueList [ExecutionExpression]
+  | ExecutionValueDict (Map.Map String ExecutionExpression)
   deriving (Show)
 
 data ExecutionExpression
   = EBinOp Operation ExecutionExpression ExecutionExpression
   | EVariable String
+  | EAccess ExecutionExpression String
   | EConstant ExecutionValue
   | ENegate ExecutionExpression
   deriving (Show)
