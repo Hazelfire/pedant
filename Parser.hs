@@ -5,7 +5,7 @@ module Parser
   ( parseProgram,
     PedantParseError (..),
     Operation (..),
-    TypedExpression (..),
+    ParseLiteral (..),
     PositionedExpression (..),
     PositionData (..),
     ParseExpression (..),
@@ -26,10 +26,14 @@ import Data.Void
 import Text.Megaparsec
 import Text.Megaparsec.Char
 import qualified Text.Megaparsec.Char.Lexer as L
-import Types (Dimension (..), Operation (..), PedantParseError (..))
+import Types (Dimension (..), Operation (..), PedantParseError (..), PrimitiveDim (..), Type (..))
 
 -- | We now define a parser for this typed language
-data Assignment = Assignment String PositionedExpression
+data Assignment = Assignment
+  { assignmentName :: String,
+    assignmentArguments :: [String],
+    assignmentExpression :: PositionedExpression
+  }
   deriving (Show)
 
 data Statement
@@ -42,16 +46,16 @@ newtype PositionData = PositionData Int
 data PositionedExpression = PositionedExpression PositionData ParseExpression
   deriving (Show)
 
-data TypedExpression
-  = TypedNumber Double Dimension
-  | TypedList [PositionedExpression]
-  | TypedRecord (Map.Map String PositionedExpression)
+data ParseLiteral
+  = ParseNumber Double Dimension
+  | ParseList [PositionedExpression]
+  | ParseRecord (Map.Map String PositionedExpression)
   deriving (Show)
 
 data ParseExpression
   = PBinOp Operation PositionedExpression PositionedExpression
   | PVariable String
-  | PConstant TypedExpression
+  | PConstant ParseLiteral
   | PNegate PositionedExpression
   | PAccess PositionedExpression String
   deriving (Show)
@@ -92,15 +96,15 @@ pVariable = PositionedExpression <$> getPositionData <*> (PVariable <$> pName)
 getPositionData :: Parser PositionData
 getPositionData = PositionData <$> getOffset
 
-pTypedNumber :: Parser () -> Parser TypedExpression
+pTypedNumber :: Parser () -> Parser ParseLiteral
 pTypedNumber sc' = do
   num <- L.lexeme sc (try L.float <|> L.decimal)
-  TypedNumber num <$> parseDimension sc'
+  ParseNumber num <$> parseDimension sc'
 
-pTypedList :: Parser () -> Parser TypedExpression
+pTypedList :: Parser () -> Parser ParseLiteral
 pTypedList sc' = do
   _ <- L.lexeme sc' (char '[')
-  TypedList <$> startList
+  ParseList <$> startList
   where
     startList :: Parser [PositionedExpression]
     startList = do
@@ -108,10 +112,10 @@ pTypedList sc' = do
       rest <- ([] <$ L.lexeme sc' (char ']')) <|> (L.lexeme sc' (char ',') >> startList)
       return (num : rest)
 
-pTypedRecord :: Parser () -> Parser TypedExpression
+pTypedRecord :: Parser () -> Parser ParseLiteral
 pTypedRecord sc' = do
   _ <- L.lexeme sc' (char '{')
-  TypedRecord . Map.fromList <$> startRecord
+  ParseRecord . Map.fromList <$> startRecord
   where
     startRecord :: Parser [(String, PositionedExpression)]
     startRecord = do
@@ -124,13 +128,13 @@ pTypedRecord sc' = do
 parseDimension :: Parser () -> Parser Dimension
 parseDimension sc' = (PowDim <$> try (char '^' *> parseNextDim Map.empty)) <|> (NormDim <$> pLoop Map.empty)
   where
-    pLoop :: Map.Map String Int -> Parser (Map.Map String Int)
+    pLoop :: Map.Map PrimitiveDim Int -> Parser (Map.Map PrimitiveDim Int)
     pLoop p = parseNextDim p <|> return p
 
-    parseNextDim :: Map.Map String Int -> Parser (Map.Map String Int)
+    parseNextDim :: Map.Map PrimitiveDim Int -> Parser (Map.Map PrimitiveDim Int)
     parseNextDim oldDim = do
       (name, power) <- L.lexeme sc' pSingleDim
-      pLoop (Map.insert name power oldDim)
+      pLoop (Map.insert (LitDim name) power oldDim)
 
     pSingleDim :: Parser (String, Int)
     pSingleDim = do
@@ -184,9 +188,10 @@ pUnit sc' = do
 pAssignment :: Parser () -> Parser Assignment
 pAssignment sc' = do
   name <- lexeme pName
+  arguments <- many (lexeme pName)
   _ <- symbol "="
   sc'
-  Assignment name <$> pExpr sc'
+  Assignment name arguments <$> pExpr sc'
 
 scn :: Parser ()
 scn =

@@ -1,142 +1,446 @@
 -- | TypeChecker for Pedant.
 module TypeCheck where
 
-import Control.Monad (forM)
+import Control.Monad (forM, liftM2)
+import Control.Monad.Except
+import Control.Monad.Identity
+import Control.Monad.State
 import qualified Data.Bifunctor as Bifunctor
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import qualified Data.Map as Map
-import Data.Map.Ordered ((|<))
 import qualified Data.Map.Ordered as OMap
+import qualified Data.Maybe as Maybe
 import qualified Data.Set as Set
 import Data.Text (Text)
+import Debug.Trace
 import Parser
 import Types
 
 data TypeError = TypeError PositionData String
 
 data TypeCheckState = TypeCheckState
-  { tcsVariables :: OMap.OMap String (Dimension, ExecutionExpression),
-    tcsUnits :: Set.Set String
+  { tcsEnv :: TypeEnv,
+    tcsSubs :: Substitution,
+    tcsUnits :: Set.Set String,
+    tcsExecutionExpressions :: OMap.OMap String ExecutionExpression
   }
 
+imap :: (Int -> a -> b) -> [a] -> [b]
+imap f list = _imap f list 0
+  where
+    _imap f (x : rest) idx =
+      f idx x : _imap f rest (idx + 1)
+    _imap f [] idx = []
+
 emptyTypeCheckState :: TypeCheckState
-emptyTypeCheckState = TypeCheckState OMap.empty Set.empty
+emptyTypeCheckState = TypeCheckState (TypeEnv Map.empty) nullSubst Set.empty OMap.empty
+
+-- | There are two different types of substitutions. Dimensional and type substitutions.
+data Substitution = Substitution
+  { subTypes :: Map.Map String Type,
+    subDimensions :: Map.Map String Dimension
+  }
+  deriving (Show)
+
+class Types a where
+  ftv :: a -> Set.Set String
+  apply :: Substitution -> a -> a
+
+instance Types Dimension where
+  ftv (NormDim n) =
+    let keys = Map.keys n
+     in Set.fromList $ Maybe.mapMaybe polymorphicVar keys
+    where
+      polymorphicVar :: PrimitiveDim -> Maybe String
+      polymorphicVar (LitDim a) = Just a
+      polymorphicVar _ = Nothing
+  ftv (PowDim n) = ftv (NormDim n)
+  ftv (PolyDim n) = Set.singleton n
+
+  apply s dim =
+    case dim of
+      NormDim n -> NormDim $ Map.foldlWithKey applyOne n Map.empty
+      PowDim n -> PowDim $ Map.foldlWithKey applyOne n Map.empty
+      PolyDim key -> case Map.lookup key (subDimensions s) of
+        Just substitution -> substitution
+        Nothing -> PolyDim key
+    where
+      applyOne :: Map.Map PrimitiveDim Int -> PrimitiveDim -> Int -> Map.Map PrimitiveDim Int
+      applyOne map (LitDim x) power = Map.filter (/= 0) $ Map.unionWith (+) map (Map.singleton (LitDim x) power)
+      applyOne map (PolyPrimDim x) power =
+        case Map.lookup x (subDimensions s) of
+          Just (NormDim substitution) -> combine map substitution
+          Just (PowDim substitution) -> combine map substitution
+          _ -> combine map (Map.singleton (PolyPrimDim x) power)
+
+      combine :: Map.Map PrimitiveDim Int -> Map.Map PrimitiveDim Int -> Map.Map PrimitiveDim Int
+      combine a b = Map.filter (/= 0) $ Map.unionWith (+) a b
+
+instance Types Type where
+  ftv (PolyType n) = Set.singleton n
+  ftv (FuncType x y) = ftv x `Set.union` ftv y
+  ftv (DictType x) = Set.unions . map ftv $ Map.elems x
+  ftv (ListType x) = ftv x
+  ftv (BaseDim x) = ftv x
+  ftv (PolyNumericType n x) = Set.insert n (ftv x)
+  ftv (PolyDictType x) = Set.unions . map ftv $ Map.elems x
+
+  apply s (PolyType n) =
+    case Map.lookup n (subTypes s) of
+      Nothing -> PolyType n
+      Just x -> apply s x
+  apply s (FuncType x y) = FuncType (apply s x) (apply s y)
+  apply s (PolyNumericType n d) =
+    case Map.lookup n (subTypes s) of
+      Just (PolyType _) ->
+        -- You cannot substitute a PolyNumeric for a PolyType. It's too general
+        PolyNumericType n d
+      Just (ListType x) ->
+        apply s (ListType (BaseDim d))
+      Just (BaseDim x) ->
+        apply s (BaseDim d)
+      _ ->
+        PolyNumericType n d
+  apply s t = t
+
+data Scheme = Scheme [String] Type
+
+instance Types Scheme where
+  ftv (Scheme vars t) = ftv t `Set.difference` Set.fromList vars
+  apply s (Scheme vars t) = Scheme vars (apply (foldr deleteFromSub s vars) t)
+    where
+      deleteFromSub :: String -> Substitution -> Substitution
+      deleteFromSub key sub =
+        Substitution
+          { subDimensions = Map.delete key (subDimensions sub),
+            subTypes = Map.delete key (subTypes sub)
+          }
+
+instance Types a => Types [a] where
+  apply s = map (apply s)
+  ftv l = Set.unions $ map ftv l
+
+nullSubst :: Substitution
+nullSubst = Substitution Map.empty Map.empty
+
+subUnion :: Substitution -> Substitution -> Substitution
+subUnion a b =
+  Substitution
+    { subTypes = subTypes a `Map.union` subTypes b,
+      subDimensions = subDimensions a `Map.union` subDimensions b
+    }
+
+composeSubst :: Substitution -> Substitution -> Substitution
+composeSubst s1 s2 = appliedSubs `subUnion` s1
+  where
+    appliedSubs =
+      Substitution
+        { subTypes = Map.map (apply s1) (subTypes s2),
+          subDimensions = Map.map (apply s1) (subDimensions s2)
+        }
+
+newtype TypeEnv = TypeEnv (Map.Map String Scheme)
+
+remove :: String -> TypeEnv -> TypeEnv
+remove var (TypeEnv env) = TypeEnv (Map.delete var env)
+
+instance Types TypeEnv where
+  ftv (TypeEnv env) = ftv (Map.elems env)
+  apply s (TypeEnv env) = TypeEnv (Map.map (apply s) env)
+
+instance Types TypeCheckState where
+  ftv state = ftv (tcsEnv state)
+  apply s state = state {tcsEnv = apply s (tcsEnv state)}
+
+generalize :: TypeEnv -> Type -> Scheme
+generalize env t = Scheme vars t
+  where
+    vars = Set.toList (ftv t `Set.difference` ftv env)
+
+newtype TIState = TIState {tiSupply :: Int}
+
+type TI a = ExceptT TypeError (State TIState) a
+
+runTI :: TI a -> (Either TypeError a, TIState)
+runTI t =
+  runState (runExceptT t) initTIState
+  where
+    initTIState = TIState {tiSupply = 0}
+
+newTyVar :: String -> TI Type
+newTyVar prefix =
+  do
+    s <- get
+    put s {tiSupply = tiSupply s + 1}
+    return (PolyType (prefix ++ show (tiSupply s)))
+
+newTyDimension :: String -> TI Dimension
+newTyDimension prefix =
+  do
+    s <- get
+    put s {tiSupply = tiSupply s + 1}
+    return (PolyDim $ prefix ++ show (tiSupply s))
+
+newTyPrimDim :: String -> TI PrimitiveDim
+newTyPrimDim prefix =
+  do
+    s <- get
+    put s {tiSupply = tiSupply s + 1}
+    return (PolyPrimDim $ prefix ++ show (tiSupply s))
+
+instantiate :: Scheme -> TI Type
+instantiate (Scheme vars t) = do
+  nvars <- mapM (\_ -> newTyVar "a") vars
+  ndims <- mapM (\_ -> newTyDimension "a") vars
+  let s =
+        nullSubst
+          { subTypes = Map.fromList (zip vars nvars),
+            subDimensions = Map.fromList (zip vars ndims)
+          }
+  return $ apply s t
+
+-- | Attempts to find a unification between dimensions
+mguDim :: PositionData -> Dimension -> Dimension -> TI Substitution
+mguDim pos (PolyDim u) t = return $ nullSubst {subDimensions = Map.singleton u t}
+mguDim pos t (PolyDim u) = return $ nullSubst {subDimensions = Map.singleton u t}
+mguDim pos (NormDim t) (NormDim u) =
+  if u == t
+    then return nullSubst
+    else -- unifying dimensions is a bit tricky, and this method is not perfect and leaves out some possible (but rare) unifications
+
+      let dividedOut = Map.filter (/= 0) $ Map.unionWith (-) t u
+          polyDim =
+            Maybe.mapMaybe
+              ( \(k, v) ->
+                  case (k, v) of
+                    (PolyPrimDim d, 1) -> Just (d, 1)
+                    (PolyPrimDim d, -1) -> Just (d, -1)
+                    _ -> Nothing
+              )
+              (Map.toList dividedOut)
+       in case polyDim of
+            (firstDim, power) : _ ->
+              let withoutPolyVar = Map.delete (PolyPrimDim firstDim) dividedOut
+                  dividedByPower = Map.map (`quot` power) withoutPolyVar
+               in return $ nullSubst {subDimensions = Map.singleton firstDim (NormDim dividedByPower)}
+            [] ->
+              throwError $ TypeError pos $ "Cannot unify " ++ show (NormDim t) ++ " and " ++ show (NormDim u)
+mguDim pos (PowDim t) (PowDim u) =
+  if u == t
+    then return nullSubst
+    else
+      let dividedOut = Map.filter (/= 0) $ Map.unionWith (-) t u
+          polyDim =
+            Maybe.mapMaybe
+              ( \(k, v) ->
+                  case (k, v) of
+                    (PolyPrimDim d, 1) -> Just d
+                    _ -> Nothing
+              )
+              (Map.toList dividedOut)
+       in case polyDim of
+            firstDim : _ ->
+              let withoutPolyVar = Map.delete (PolyPrimDim firstDim) dividedOut
+               in return $ nullSubst {subDimensions = Map.singleton firstDim (PowDim withoutPolyVar)}
+            [] ->
+              throwError $ TypeError pos $ "Cannot unify " ++ show (PowDim t) ++ " and " ++ show (PowDim u)
+mguDim pos (NormDim u) (PowDim t) = do
+  -- I can only unify BaseDims and PowDims if they both unify to dimensionless
+  ( do
+      s1 <- mguDim pos (NormDim Map.empty) (NormDim u)
+      s2 <- mguDim pos (PowDim Map.empty) (apply s1 (PowDim t))
+      return $ s2 `composeSubst` s1
+    )
+    `catchError` (\_ -> throwError $ TypeError pos $ "Cannot unify " ++ show (NormDim u) ++ " and " ++ show (PowDim t))
+mguDim pos (PowDim u) (NormDim t) =
+  do
+    -- I can only unify BaseDims and PowDims if they both unify to dimensionless
+    s1 <- mguDim pos (PowDim Map.empty) (PowDim u)
+    s2 <- mguDim pos (NormDim Map.empty) (apply s1 (NormDim t))
+    return $ s2 `composeSubst` s1
+    `catchError` (\_ -> throwError $ TypeError pos $ "Cannot unify " ++ show (PowDim u) ++ " and " ++ show (NormDim t))
+
+mgu :: PositionData -> Type -> Type -> TI Substitution
+mgu pos a b = wrapError a b (trace ("Unifying " ++ show a ++ " and " ++ show b) mgu' pos a b)
+
+mgu' :: PositionData -> Type -> Type -> TI Substitution
+mgu' p (FuncType l r) (FuncType l' r') = do
+  s1 <- mgu p l l'
+  s2 <- mgu p (apply s1 r) (apply s1 r')
+  return (s1 `composeSubst` s2)
+mgu' p (PolyType u) t = varBind p u t
+mgu' p t (PolyType u) = varBind p u t
+mgu' p (BaseDim t) (BaseDim u) = mguDim p t u
+mgu' p (PolyNumericType n1 t1) (PolyNumericType n2 t2) = do
+  sub <- mguDim p t1 t2
+  if n1 == n2
+    then return sub
+    else return $ sub {subTypes = Map.singleton n1 (PolyNumericType n2 t2)}
+mgu' p (PolyNumericType n t) (BaseDim u) = do
+  sub <- mguDim p t u
+  return $ sub {subTypes = Map.singleton n (BaseDim u)}
+mgu' p (BaseDim t) (PolyNumericType n u) = do
+  sub <- mguDim p t u
+  return $ sub {subTypes = Map.singleton n (BaseDim u)}
+mgu' pos t1 t2 = throwError $ TypeError pos $ "types do not unify: " ++ show t1 ++ " vs. " ++ show t2
+
+wrapError :: Type -> Type -> TI Substitution -> TI Substitution
+wrapError t1 t2 child = child `catchError` (\(TypeError pos err) -> throwError $ TypeError pos $ err ++ "\n while trying to unify " ++ show t1 ++ " and " ++ show t2)
+
+varBind :: PositionData -> String -> Type -> TI Substitution
+varBind p u t
+  | t == PolyType u = return nullSubst
+  | u `Set.member` ftv t =
+    throwError $
+      TypeError p $
+        "occurs check fails: " ++ u
+          ++ " vs. "
+          ++ show t
+  | otherwise = return (nullSubst {subTypes = Map.singleton u t})
 
 typeCheck :: TypeCheckState -> [Statement] -> Either TypeError TypeCheckState
-typeCheck tcState (statement : rest) =
-  case statement of
-    UnitStatement units -> typeCheck (tcState {tcsUnits = Set.union (tcsUnits tcState) (Set.fromList units)}) rest
-    AssignmentStatement (Assignment name expr) ->
-      case typeCheckExpression tcState expr of
-        Left err -> Left err
-        Right value -> typeCheck (tcState {tcsVariables = (name, value) |< tcsVariables tcState}) rest
-typeCheck tcState [] = Right tcState
+typeCheck tcState statements =
+  fst $ runTI (inferLoop tcState statements)
+  where
+    inferLoop :: TypeCheckState -> [Statement] -> TI TypeCheckState
+    inferLoop state [] = return state
+    inferLoop state (statement : rest) =
+      case statement of
+        UnitStatement units ->
+          let newUnits = tcsUnits state `Set.union` Set.fromList units
+           in inferLoop (state {tcsUnits = newUnits}) rest
+        AssignmentStatement assignment -> do
+          mapPairs <-
+            mapM
+              ( \a -> do
+                  tv <- newTyVar a
+                  return (a, Scheme [] tv)
+              )
+              (assignmentArguments assignment)
+          let env = tcsEnv state
+              arguments = assignmentArguments assignment
+              TypeEnv env' = foldr remove env arguments
+              env'' = TypeEnv (env' `Map.union` Map.fromList mapPairs)
+          TypeCheckResult s1 t1 ex <- ti (state {tcsEnv = env''}) (assignmentExpression assignment)
 
-typeCheckExpression :: TypeCheckState -> PositionedExpression -> Either TypeError (Dimension, ExecutionExpression)
-typeCheckExpression tcState (PositionedExpression pos expression) =
-  let toTypeError = Bifunctor.first (TypeError pos)
+          let varType = foldl (\tv acc -> apply s1 tv `FuncType` acc) t1 (map (\(_, Scheme _ tv) -> tv) mapPairs)
+              name = assignmentName assignment
+              TypeEnv env' = remove name env
+              t' = generalize (apply s1 env) varType
+              envWithVar = TypeEnv (Map.insert name t' env')
+          let tcState =
+                state
+                  { tcsEnv = envWithVar,
+                    tcsSubs = s1 `composeSubst` tcsSubs state,
+                    tcsExecutionExpressions = (name, wrapFunctionArgs arguments ex) OMap.|< tcsExecutionExpressions state
+                  }
+          inferLoop tcState rest
+
+wrapFunctionArgs :: [String] -> ExecutionExpression -> ExecutionExpression
+wrapFunctionArgs (arg : rest) expr = EConstant (ExecutionValueFunc arg (wrapFunctionArgs rest expr))
+wrapFunctionArgs [] expr = expr
+
+data TypeCheckResult = TypeCheckResult
+  { tiSub :: Substitution,
+    tiType :: Type,
+    tiExecExpression :: ExecutionExpression
+  }
+
+foldSubst :: Traversable t => t Substitution -> Substitution
+foldSubst = foldr composeSubst nullSubst
+
+ti :: TypeCheckState -> PositionedExpression -> TI TypeCheckResult
+ti state (PositionedExpression pos expression) =
+  let (TypeEnv env) = tcsEnv state
+      units = tcsUnits state
    in case expression of
-        PBinOp Mult x y -> do
-          (xdim, xnum) <- typeCheckExpression tcState x
-          (ydim, ynum) <- typeCheckExpression tcState y
-          dimension <- toTypeError (dimMult xdim ydim)
-          return (dimension, EBinOp Mult xnum ynum)
-        PBinOp Div x y -> do
-          (xdim, xnum) <- typeCheckExpression tcState x
-          (ydim, ynum) <- typeCheckExpression tcState y
-          reciprocated <- toTypeError $ dimRecip ydim
-          dimension <- toTypeError (dimMult xdim reciprocated)
-          return (dimension, EBinOp Div xnum ynum)
-        PBinOp Add x y -> do
-          (xdim, xnum) <- typeCheckExpression tcState x
-          (ydim, ynum) <- typeCheckExpression tcState y
-          if baseDimension xdim == baseDimension ydim
-            then return (xdim, EBinOp Add xnum ynum)
-            else Left . TypeError pos $ "Could not add " ++ show xdim ++ " and " ++ show ydim
-        PBinOp Sub x y -> do
-          (xdim, xnum) <- typeCheckExpression tcState x
-          (ydim, ynum) <- typeCheckExpression tcState y
-          if baseDimension xdim == baseDimension ydim
-            then return (xdim, EBinOp Sub xnum ynum)
-            else Left . TypeError pos $ "Could not subtract " ++ show xdim ++ " and " ++ show ydim
-        PBinOp Power x y -> do
-          (xdim, xnum) <- typeCheckExpression tcState x
-          (ydim, ynum) <- typeCheckExpression tcState y
-          case xdim of
-            PowDim childDim -> do
-              dimension <- toTypeError $ dimMult (NormDim childDim) ydim
-              return (dimension, EBinOp Power xnum ynum)
-            _ ->
-              if dimensionless xdim && dimensionless ydim
-                then return (xdim, EBinOp Power xnum ynum)
-                else Left $ TypeError pos $ "Could not power " ++ show xdim ++ " to " ++ show ydim ++ " base needs to be power type"
-        PBinOp App (PositionedExpression _ (PVariable "ln")) x -> do
-          (xdim, xnum) <- typeCheckExpression tcState x
-          case xdim of
-            PowDim childDim ->
-              return (NormDim childDim, EBinOp App (EVariable "ln") xnum)
-            NormDim dim ->
-              if dim == Map.empty
-                then return (NormDim dim, EBinOp App (EVariable "ln") xnum)
-                else Left $ TypeError pos $ "Count not take log of " ++ show xdim ++ " must be power type or dimensionless"
-            _ ->
-              Left $ TypeError pos $ "Count not take log of " ++ show xdim ++ " must be power type or dimensionless"
-        PBinOp App (PositionedExpression _ (PVariable name)) x ->
-          Left $ TypeError pos "No such function"
-        PBinOp App (PositionedExpression _ (PConstant val)) x -> Left . TypeError pos $ "Constants can not be used as functions"
-        PBinOp App (PositionedExpression _ (PNegate val)) x -> Left . TypeError pos $ "Cannot apply negation"
-        PBinOp App _ x -> Left . TypeError pos $ "Could not evalute function"
-        PAccess x name -> do
-          (xdim, xnum) <- typeCheckExpression tcState x
-          case xdim of
-            DictDim values ->
-              case Map.lookup name values of
-                Just entry -> do
-                  return (entry, EAccess xnum name)
+        PVariable n ->
+          case Map.lookup n env of
+            Nothing ->
+              case inBuiltFunctions n of
+                Just scheme -> do
+                  t <- instantiate scheme
+                  return $ TypeCheckResult nullSubst t (EVariable n)
                 Nothing ->
-                  Left . TypeError pos $
-                    concat
-                      [ "Cannot access ",
-                        name,
-                        " on dictionary of type ",
-                        show xdim
-                      ]
-            _ ->
-              Left . TypeError pos $
-                concat
-                  [ "Cannot access ",
-                    name,
-                    " on type ",
-                    show xdim,
-                    " as it is not a dictionary"
-                  ]
-        PVariable name ->
-          case OMap.lookup name (tcsVariables tcState) of
-            Just (dim, _) ->
-              return (dim, EVariable name)
-            Nothing -> Left . TypeError pos $ "Could not find variable " ++ name
-        PConstant (TypedNumber value dim) ->
-          let base = baseUnits dim
-              missingUnits = Set.difference base (tcsUnits tcState)
+                  throwError $ TypeError pos $ "unbound variable: " ++ n
+            Just sigma -> do
+              t <- instantiate sigma
+              return $ TypeCheckResult nullSubst t (EVariable n)
+        PConstant (ParseNumber value dim) ->
+          let base = baseUnitsDim dim
+              missingUnits = Set.difference base units
            in if Set.size missingUnits == 0
-                then return (dim, EConstant $ ExecutionValueNumber value)
-                else Left $ TypeError pos (concat ["units ", unwords (Set.toList missingUnits), " not declared. Try adding a \"unit ", unwords (Set.toList missingUnits), "\" statement before this line"])
-        PConstant (TypedList list) -> do
-          evaluations <- mapM (typeCheckExpression tcState) list
+                then return $ TypeCheckResult nullSubst (BaseDim dim) (EConstant $ ExecutionValueNumber value)
+                else throwError $ TypeError pos (concat ["units ", unwords (Set.toList missingUnits), " not declared. Try adding a \"unit ", unwords (Set.toList missingUnits), "\" statement before this line"])
+        PConstant (ParseList list) -> do
+          evaluations <- mapM (ti state) list
           case evaluations of
-            [] -> Left $ TypeError pos "Cannot have empty list"
-            (dimension, value) : rest ->
-              if all ((== dimension) . fst) rest
-                then return (ListDim dimension, EConstant $ ExecutionValueList (value : map snd rest))
-                else Left $ TypeError pos "All items in a list must have the same units"
-        PConstant (TypedRecord record) -> do
+            [] -> throwError $ TypeError pos "Cannot have empty list"
+            TypeCheckResult substitutions _type value : rest ->
+              if all ((== _type) . tiType) rest
+                then
+                  let substitutions = foldSubst (map tiSub evaluations)
+                   in return $ TypeCheckResult substitutions (ListType _type) (EConstant $ ExecutionValueList (value : map tiExecExpression rest))
+                else throwError $ TypeError pos "All items in a list must have the same units"
+        PConstant (ParseRecord record) -> do
           recordEntries <- forM (Map.toList record) $ \(key, elem) -> do
-            (dimension, value) <- typeCheckExpression tcState elem
-            return (key, (dimension, value))
+            TypeCheckResult sub _type ex <- ti state elem
+            return (key, (sub, _type, ex))
 
-          let dimension = map (\(key, (dimension, _)) -> (key, dimension)) recordEntries
-              elems = map (\(key, (_, value)) -> (key, value)) recordEntries
-          return (DictDim (Map.fromList dimension), EConstant $ ExecutionValueDict (Map.fromList elems))
-        PNegate expr -> do
-          (dim, num) <- typeCheckExpression tcState expr
-          return (dim, ENegate num)
+          let dimension = map (\(key, (_, dimension, _)) -> (key, dimension)) recordEntries
+              elems = map (\(key, (_, _, value)) -> (key, value)) recordEntries
+              substitutions = map (\(key, (sub, _, _)) -> sub) recordEntries
+          return $ TypeCheckResult (foldSubst substitutions) (DictType (Map.fromList dimension)) (EConstant $ ExecutionValueDict (Map.fromList elems))
+        PBinOp App e1 e2 ->
+          do
+            tv <- newTyVar "a"
+            TypeCheckResult sub1 type1 ex1 <- ti state e1
+            TypeCheckResult sub2 type2 ex2 <- ti (apply sub1 state) e2
+            sub3 <- mgu pos (apply sub2 type1) (FuncType type2 tv)
+            return $ TypeCheckResult (sub3 `composeSubst` sub2 `composeSubst` sub1) (apply sub3 tv) (EBinOp App ex1 ex2)
+        PBinOp op e1 e2 ->
+          do
+            tv <- newTyVar "a"
+            opType <- instantiate (opDimension op)
+            TypeCheckResult s1 t1 ex1 <- ti state e1
+            TypeCheckResult s2 t2 ex2 <- ti (apply s1 state) e2
+            s3 <- mgu pos opType (t1 `FuncType` (t2 `FuncType` tv))
+            return $ TypeCheckResult (s3 `composeSubst` s2 `composeSubst` s1) (apply s3 tv) (EBinOp op ex1 ex2)
+        PAccess e1 x ->
+          do
+            tv <- newTyVar "a"
+            TypeCheckResult s1 t1 ex1 <- ti state e1
+            s2 <- mgu pos t1 (PolyDictType (Map.singleton x tv))
+            return $ TypeCheckResult (s2 `composeSubst` s1) (apply s2 tv) (EAccess ex1 x)
+        PNegate e1 ->
+          do
+            let negateScheme = Scheme ["a"] $ normalDimPoly "a" `FuncType` normalDimPoly "a"
+            negateType <- instantiate negateScheme
+            tv <- newTyVar "a"
+            TypeCheckResult s1 t1 ex1 <- ti state e1
+            s2 <- mgu pos negateType (t1 `FuncType` tv)
+            return $ TypeCheckResult (s2 `composeSubst` s1) (apply s2 tv) (ENegate ex1)
+
+normalDimPoly :: String -> Type
+normalDimPoly name = PolyNumericType "t" $ NormDim $ Map.singleton (PolyPrimDim name) 1
+
+powerDimPoly :: String -> Type
+powerDimPoly name = PolyNumericType "t" $ PowDim $ Map.singleton (PolyPrimDim name) 1
+
+normalDim :: [(PrimitiveDim, Int)] -> Type
+normalDim powers = PolyNumericType "t" $ NormDim $ Map.fromList powers
+
+powerDim :: [(PrimitiveDim, Int)] -> Type
+powerDim powers = PolyNumericType "t" $ PowDim $ Map.fromList powers
+
+inBuiltFunctions :: String -> Maybe Scheme
+inBuiltFunctions "ln" = Just $ Scheme ["t", "a"] $ powerDimPoly "a" `FuncType` normalDimPoly "a"
+inBuiltFunctions _ = Nothing
+
+opDimension :: Operation -> Scheme
+opDimension Add = Scheme ["a", "t"] $ normalDimPoly "a" `FuncType` (normalDimPoly "a" `FuncType` normalDimPoly "a")
+opDimension Sub = Scheme ["a", "t"] $ normalDimPoly "a" `FuncType` (normalDimPoly "a" `FuncType` normalDimPoly "a")
+opDimension Mult = Scheme ["a", "b", "t"] $ normalDimPoly "a" `FuncType` (normalDimPoly "b" `FuncType` normalDim [(PolyPrimDim "a", 1), (PolyPrimDim "b", 1)])
+opDimension Div = Scheme ["a", "b", "t"] $ normalDimPoly "a" `FuncType` (normalDimPoly "b" `FuncType` normalDim [(PolyPrimDim "a", 1), (PolyPrimDim "b", -1)])
+opDimension Power = Scheme ["a", "b", "t"] $ powerDimPoly "a" `FuncType` (normalDimPoly "b" `FuncType` powerDim [(PolyPrimDim "a", 1), (PolyPrimDim "b", -1)])
+opDimension App = Scheme ["a", "b", "t"] $ ((PolyType "a" `FuncType` PolyType "b") `FuncType` PolyType "a") `FuncType` PolyType "b"

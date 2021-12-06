@@ -87,7 +87,7 @@ main = do
         Right a -> do
           case typeCheck emptyTypeCheckState a of
             Right valid -> do
-              let program = List.reverse $ OMap.assocs (fmap snd (tcsVariables valid))
+              let program = List.reverse $ OMap.assocs (tcsExecutionExpressions valid)
                in case executeProgram OMap.empty program of
                     Right result -> do
                       forM_ (List.reverse (OMap.assocs result)) $ \(name, value) ->
@@ -117,11 +117,11 @@ evaluateExpression variables expression =
     EBinOp Sub x y -> (-) <$> evaluateExpression variables x <*> evaluateExpression variables y
     EBinOp Power x y -> (**) <$> evaluateExpression variables x <*> evaluateExpression variables y
     EBinOp App (EVariable "ln") x -> log <$> evaluateExpression variables x
-    EBinOp App (EVariable name) x -> Left $ "No such function " ++ name
-    EBinOp App (EConstant val) x -> Left $ "Cannot call constant " ++ show val
-    EBinOp App (EBinOp op x1 x2) x -> Left $ "Cannot call operator " ++ show x1 ++ " " ++ show x2
-    EBinOp App (ENegate val) x -> Left $ "Cannot call negation of " ++ show val
-    EBinOp App (EAccess _ val) x -> Left $ "Cannot call access of " ++ show val
+    EBinOp App fExp parExp ->  do
+      func <- evaluateExpression variables fExp
+      case func of
+        FuncValue arg exp -> evaluateExpression variables (bindVariable arg parExp exp)
+        _ -> Left $ "Cannot call constant " ++ show func
     EAccess x name -> do
       evaluatedX <- evaluateExpression variables x
       case evaluatedX of
@@ -135,6 +135,7 @@ evaluateExpression variables expression =
         Just value -> return value
         Nothing -> Left $ "Could not find variable " ++ name
     EConstant (ExecutionValueNumber num) -> return (NumberValue num)
+    EConstant (ExecutionValueFunc arg exp) -> return (FuncValue arg exp)
     EConstant (ExecutionValueDict entries) -> do
       evaluatedEntries <- forM (Map.toList entries) $ \(key, value) -> do
         evaluatedValue <- evaluateExpression variables value
@@ -144,3 +145,11 @@ evaluateExpression variables expression =
       results <- mapM (evaluateExpression variables) list
       return (ListValue results)
     ENegate expr -> negate <$> evaluateExpression variables expr
+
+bindVariable :: String -> ExecutionExpression -> ExecutionExpression -> ExecutionExpression
+bindVariable name r (EVariable n) | name == n = r
+                                  | otherwise = EVariable n
+bindVariable name r (EBinOp op e1 e2) = EBinOp op (bindVariable name r e1) (bindVariable name r e2)
+bindVariable name r (EAccess e1 x) = EAccess (bindVariable name r e1) x
+bindVariable name r (EConstant v) = EConstant v
+bindVariable name r (ENegate e1) = ENegate (bindVariable name r e1)
