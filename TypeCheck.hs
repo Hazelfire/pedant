@@ -52,15 +52,15 @@ instance Types Dimension where
      in Set.fromList $ Maybe.mapMaybe polymorphicVar keys
     where
       polymorphicVar :: PrimitiveDim -> Maybe String
-      polymorphicVar (LitDim a) = Just a
+      polymorphicVar (PolyPrimDim a) = Just a
       polymorphicVar _ = Nothing
   ftv (PowDim n) = ftv (NormDim n)
   ftv (PolyDim n) = Set.singleton n
 
   apply s dim =
     case dim of
-      NormDim n -> NormDim $ Map.foldlWithKey applyOne n Map.empty
-      PowDim n -> PowDim $ Map.foldlWithKey applyOne n Map.empty
+      NormDim n -> NormDim $ Map.foldlWithKey applyOne Map.empty n
+      PowDim n -> PowDim $ Map.foldlWithKey applyOne Map.empty n
       PolyDim key -> case Map.lookup key (subDimensions s) of
         Just substitution -> substitution
         Nothing -> PolyDim key
@@ -69,8 +69,8 @@ instance Types Dimension where
       applyOne map (LitDim x) power = Map.filter (/= 0) $ Map.unionWith (+) map (Map.singleton (LitDim x) power)
       applyOne map (PolyPrimDim x) power =
         case Map.lookup x (subDimensions s) of
-          Just (NormDim substitution) -> combine map substitution
-          Just (PowDim substitution) -> combine map substitution
+          Just (NormDim substitution) -> combine map (Map.map (* power) substitution)
+          Just (PowDim substitution) -> combine map (Map.map (* power) substitution)
           _ -> combine map (Map.singleton (PolyPrimDim x) power)
 
       combine :: Map.Map PrimitiveDim Int -> Map.Map PrimitiveDim Int -> Map.Map PrimitiveDim Int
@@ -101,9 +101,20 @@ instance Types Type where
         apply s (BaseDim d)
       _ ->
         PolyNumericType n d
-  apply s t = t
+  apply s (BaseDim n) =
+    BaseDim $ apply s n
+  apply s (ListType n) =
+    ListType $ apply s n
+  apply s (PolyDictType n) =
+    PolyDictType (Map.map (apply s) n)
+  apply s (DictType n) =
+    DictType (Map.map (apply s) n)
 
 data Scheme = Scheme [String] Type
+
+instance Show Scheme where
+  show (Scheme [] t) = show t
+  show (Scheme args t) = "∀" ++ unwords args ++ ". " ++ show t
 
 instance Types Scheme where
   ftv (Scheme vars t) = ftv t `Set.difference` Set.fromList vars
@@ -140,6 +151,7 @@ composeSubst s1 s2 = appliedSubs `subUnion` s1
         }
 
 newtype TypeEnv = TypeEnv (Map.Map String Scheme)
+  deriving (Show)
 
 remove :: String -> TypeEnv -> TypeEnv
 remove var (TypeEnv env) = TypeEnv (Map.delete var env)
@@ -261,7 +273,7 @@ mguDim pos (PowDim u) (NormDim t) =
     `catchError` (\_ -> throwError $ TypeError pos $ "Cannot unify " ++ show (PowDim u) ++ " and " ++ show (NormDim t))
 
 mgu :: PositionData -> Type -> Type -> TI Substitution
-mgu pos a b = wrapError a b (trace ("Unifying " ++ show a ++ " and " ++ show b) mgu' pos a b)
+mgu pos a b = wrapError a b (mgu' pos a b)
 
 mgu' :: PositionData -> Type -> Type -> TI Substitution
 mgu' p (FuncType l r) (FuncType l' r') = do
@@ -282,6 +294,17 @@ mgu' p (PolyNumericType n t) (BaseDim u) = do
 mgu' p (BaseDim t) (PolyNumericType n u) = do
   sub <- mguDim p t u
   return $ sub {subTypes = Map.singleton n (BaseDim u)}
+mgu' p (PolyDictType t) (DictType u) = do
+  foldM go nullSubst (Map.toList t)
+  where
+    go :: Substitution -> (String, Type) -> TI Substitution
+    go sub (key, type_) = do
+      case Map.lookup key u of
+        Just currType -> do
+          s1 <- mgu p (apply sub type_) (apply sub currType)
+          return (sub `composeSubst` s1)
+        Nothing -> throwError $ TypeError p $ show (DictType u) ++ " is missing key " ++ key
+mgu' p (DictType t) (PolyDictType u) = mgu' p (PolyDictType u) (DictType t)
 mgu' pos t1 t2 = throwError $ TypeError pos $ "types do not unify: " ++ show t1 ++ " vs. " ++ show t2
 
 wrapError :: Type -> Type -> TI Substitution -> TI Substitution
@@ -323,7 +346,7 @@ typeCheck tcState statements =
               env'' = TypeEnv (env' `Map.union` Map.fromList mapPairs)
           TypeCheckResult s1 t1 ex <- ti (state {tcsEnv = env''}) (assignmentExpression assignment)
 
-          let varType = foldl (\tv acc -> apply s1 tv `FuncType` acc) t1 (map (\(_, Scheme _ tv) -> tv) mapPairs)
+          let varType = foldl (\acc (_, Scheme _ tv) -> apply s1 tv `FuncType` acc) (apply s1 t1) mapPairs
               name = assignmentName assignment
               TypeEnv env' = remove name env
               t' = generalize (apply s1 env) varType

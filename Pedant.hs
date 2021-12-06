@@ -91,7 +91,7 @@ main = do
                in case executeProgram OMap.empty program of
                     Right result -> do
                       forM_ (List.reverse (OMap.assocs result)) $ \(name, value) ->
-                        putStrLn $ name ++ " = " ++ show value
+                        putStrLn $ name ++ " = " ++ show value ++ " " ++ maybe "" show (envLookup name (tcsEnv valid))
                     Left err ->
                       putStrLn err
             Left err -> do
@@ -99,6 +99,9 @@ main = do
               putStrLn (ppePrint diag)
         Left b -> putStrLn (ppePrint (NonEmpty.head b))
     _ -> putStrLn "dimensional [file]"
+  where
+    envLookup :: String -> TypeEnv -> Maybe Scheme
+    envLookup key (TypeEnv d) = Map.lookup key d
 
 executeProgram :: OMap.OMap String NumericValue -> [(String, ExecutionExpression)] -> Either String (OMap.OMap String NumericValue)
 executeProgram values ((name, expr) : rest) =
@@ -117,7 +120,7 @@ evaluateExpression variables expression =
     EBinOp Sub x y -> (-) <$> evaluateExpression variables x <*> evaluateExpression variables y
     EBinOp Power x y -> (**) <$> evaluateExpression variables x <*> evaluateExpression variables y
     EBinOp App (EVariable "ln") x -> log <$> evaluateExpression variables x
-    EBinOp App fExp parExp ->  do
+    EBinOp App fExp parExp -> do
       func <- evaluateExpression variables fExp
       case func of
         FuncValue arg exp -> evaluateExpression variables (bindVariable arg parExp exp)
@@ -147,8 +150,9 @@ evaluateExpression variables expression =
     ENegate expr -> negate <$> evaluateExpression variables expr
 
 bindVariable :: String -> ExecutionExpression -> ExecutionExpression -> ExecutionExpression
-bindVariable name r (EVariable n) | name == n = r
-                                  | otherwise = EVariable n
+bindVariable name r (EVariable n)
+  | name == n = r
+  | otherwise = EVariable n
 bindVariable name r (EBinOp op e1 e2) = EBinOp op (bindVariable name r e1) (bindVariable name r e2)
 bindVariable name r (EAccess e1 x) = EAccess (bindVariable name r e1) x
 bindVariable name r (EConstant v) = EConstant v

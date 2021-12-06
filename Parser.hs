@@ -158,7 +158,7 @@ pTerm sc' =
           ]
    in do
         expression <- mainExpression
-        accessor expression <|> return expression
+        L.lexeme sc' (accessor expression <|> return expression)
   where
     accessor :: PositionedExpression -> Parser PositionedExpression
     accessor expr = do
