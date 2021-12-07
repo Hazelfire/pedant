@@ -19,7 +19,10 @@ duration_of_initial_consumption = 1 years
 
 // This is really awkwardly hacked into types... I wonder if there's a better
 // way to do this
-percent_of_transfers_consumed = 1 usdconsumed usdtransfered-1 - percent_of_transfers_invested * (1 usdconsumed usdinvested-1)
+percent_of_transfers_consumed = 
+ 1 usdconsumed usdtransfered-1 - 
+ percent_of_transfers_invested * 
+ (1 usdconsumed usdinvested-1)
 
 consumption_possible_by_funds = 
   percent_of_transfers_consumed * 
@@ -38,7 +41,8 @@ future_increase_in_ln_consumption =
   log_consumption_created baseline_consumption_per_capita annual_increase_consumption_by_roi
 discount_rate = 1.04 ^years-1
 duration_of_investment = 10 years
-pv payment discount duration = payment * (1 - (discount ^ (-duration))) / ln discount_rate
+pv payment discount duration = 
+  payment * (1 - (discount ^ (-duration))) / ln discount_rate
 pv_of_investment = pv future_increase_in_ln_consumption discount_rate (duration_of_investment - (1 years))
 percent_of_investment_returned = 0.2
 duration_of_end_of_benefits = 1 years

@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | The parser for dimensional, a small dimensional programming language
@@ -50,15 +51,51 @@ pedantError te@(TypeError (PositionData offset length) err) name contents =
           ppePrint = errorBundlePretty error
         }
 
+getTypes :: String -> IO (Map.Map Int String)
+getTypes name = do
+  contents <- T.pack <$> readFile name
+  case parseProgram name contents of
+    Right parsed ->
+      case typeCheck emptyTypeCheckState parsed of
+        (_, state) ->
+          let offsetTypes =
+                mapMaybe
+                  ( \case
+                      AssignmentStatement assignment ->
+                        case assignmentExpression assignment of
+                          Positioned (PositionData offset length) _ ->
+                            case tcsEnv state of
+                              TypeEnv map ->
+                                case Map.lookup (assignmentName assignment) map of
+                                  Just scheme ->
+                                    Just (offset, show scheme)
+                                  _ -> Nothing
+                      _ -> Nothing
+                  )
+                  parsed
+              initialPosState =
+                PosState
+                  { pstateInput = contents,
+                    pstateOffset = 0,
+                    pstateSourcePos = initialPos name,
+                    pstateTabWidth = defaultTabWidth,
+                    pstateLinePrefix = ""
+                  }
+              (positions, posState) = attachSourcePos id (map fst offsetTypes) initialPosState
+              entries = zip (map ((\a -> a - 1) . unPos . sourceLine . snd) positions) (map snd offsetTypes)
+           in return (Map.fromList entries)
+    Left _ ->
+      return Map.empty
+
 getErrors :: String -> IO [LSP.Diagnostic]
 getErrors name = do
   contents <- T.pack <$> readFile name
   case parseProgram name contents of
     Right parsed ->
       case typeCheck emptyTypeCheckState parsed of
-        Right valid ->
+        (Nothing, _) ->
           return []
-        Left err -> do
+        (Just err, _) -> do
           let diag = pedantError err name contents
           return [parseErrorToDiagnostic diag]
     Left err ->
@@ -81,13 +118,13 @@ main = do
   args <- Env.getArgs
   case args of
     ("lsp" : _) -> do
-      void $ LSP.runLSP getErrors
+      void $ LSP.runLSP getErrors getTypes
     ("compile" : name : _) -> do
       contents <- T.pack <$> readFile name
       case parseProgram name contents of
         Right a -> do
           case typeCheck emptyTypeCheckState a of
-            Right valid -> do
+            (Nothing, valid) -> do
               let program = List.reverse $ OMap.assocs (tcsExecutionExpressions valid)
                in case executeProgram OMap.empty program of
                     Right result -> do
@@ -95,7 +132,7 @@ main = do
                         putStrLn $ name ++ " = " ++ show value ++ " " ++ maybe "" show (envLookup name (tcsEnv valid))
                     Left err ->
                       putStrLn err
-            Left err -> do
+            (Just err, _) -> do
               let diag = pedantError err name contents
               putStrLn (ppePrint diag)
         Left b -> putStrLn (ppePrint (NonEmpty.head b))

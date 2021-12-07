@@ -6,6 +6,7 @@ import Control.Monad.Except
 import Control.Monad.Identity
 import Control.Monad.State
 import qualified Data.Bifunctor as Bifunctor
+import qualified Data.Either as Either
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import qualified Data.Map as Map
 import qualified Data.Map.Ordered as OMap
@@ -323,12 +324,15 @@ varBind p u t
           ++ show t
   | otherwise = return (nullSubst {subTypes = Map.singleton u t})
 
-typeCheck :: TypeCheckState -> [Statement] -> Either TypeError TypeCheckState
+typeCheck :: TypeCheckState -> [Statement] -> (Maybe TypeError, TypeCheckState)
 typeCheck tcState statements =
-  fst $ runTI (inferLoop tcState statements)
+  let (result, _) = runTI (inferLoop tcState statements)
+   in case result of
+        Right result -> result
+        Left err -> (Just err, tcState)
   where
-    inferLoop :: TypeCheckState -> [Statement] -> TI TypeCheckState
-    inferLoop state [] = return state
+    inferLoop :: TypeCheckState -> [Statement] -> TI (Maybe TypeError, TypeCheckState)
+    inferLoop state [] = return (Nothing, state)
     inferLoop state (statement : rest) =
       case statement of
         UnitStatement units ->
@@ -360,6 +364,7 @@ typeCheck tcState statements =
                     tcsExecutionExpressions = (name, wrapFunctionArgs arguments ex) OMap.|< tcsExecutionExpressions state
                   }
           inferLoop tcState rest
+        `catchError` (\err -> return (Just err, state))
 
 wrapFunctionArgs :: [String] -> ExecutionExpression -> ExecutionExpression
 wrapFunctionArgs (arg : rest) expr = EConstant (ExecutionValueFunc arg (wrapFunctionArgs rest expr))
