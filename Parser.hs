@@ -4,7 +4,10 @@
 module Parser
   ( parseProgram,
     PedantParseError (..),
+    Positioned (..),
     Operation (..),
+    ParseDimensionPart (..),
+    ParseDimension (..),
     ParseLiteral (..),
     PositionedExpression (..),
     PositionData (..),
@@ -40,14 +43,27 @@ data Statement
   = AssignmentStatement Assignment
   | UnitStatement [String]
 
-newtype PositionData = PositionData Int
+data PositionData = PositionData Int Int
   deriving (Show, Eq, Ord)
 
-data PositionedExpression = PositionedExpression PositionData ParseExpression
+data Positioned a = Positioned PositionData a
+  deriving (Show)
+
+type PositionedExpression = Positioned ParseExpression
+
+data ParseDimensionPart = ParseDimensionPart
+  { pdpName :: String,
+    pdpPower :: Int
+  }
+  deriving (Show)
+
+data ParseDimension
+  = PowParseDim [Positioned ParseDimensionPart]
+  | NormalParseDim [Positioned ParseDimensionPart]
   deriving (Show)
 
 data ParseLiteral
-  = ParseNumber Double Dimension
+  = ParseNumber Double ParseDimension
   | ParseList [PositionedExpression]
   | ParseRecord (Map.Map String PositionedExpression)
   deriving (Show)
@@ -91,10 +107,7 @@ parens :: Parser a -> Parser a
 parens = between (symbol "(") (symbol ")")
 
 pVariable :: Parser PositionedExpression
-pVariable = PositionedExpression <$> getPositionData <*> (PVariable <$> pName)
-
-getPositionData :: Parser PositionData
-getPositionData = PositionData <$> getOffset
+pVariable = position (PVariable <$> pName)
 
 pTypedNumber :: Parser () -> Parser ParseLiteral
 pTypedNumber sc' = do
@@ -125,25 +138,25 @@ pTypedRecord sc' = do
       rest <- ([] <$ L.lexeme sc' (char '}')) <|> (L.lexeme sc' (char ',') >> startRecord)
       return ((name, value) : rest)
 
-parseDimension :: Parser () -> Parser Dimension
-parseDimension sc' = (PowDim <$> try (char '^' *> parseNextDim Map.empty)) <|> (NormDim <$> pLoop Map.empty)
+parseDimension :: Parser () -> Parser ParseDimension
+parseDimension sc' = (PowParseDim <$> try (char '^' *> parseNextDim [])) <|> (NormalParseDim <$> pLoop [])
   where
-    pLoop :: Map.Map PrimitiveDim Int -> Parser (Map.Map PrimitiveDim Int)
+    pLoop :: [Positioned ParseDimensionPart] -> Parser [Positioned ParseDimensionPart]
     pLoop p = parseNextDim p <|> return p
 
-    parseNextDim :: Map.Map PrimitiveDim Int -> Parser (Map.Map PrimitiveDim Int)
+    parseNextDim :: [Positioned ParseDimensionPart] -> Parser [Positioned ParseDimensionPart]
     parseNextDim oldDim = do
-      (name, power) <- L.lexeme sc' pSingleDim
-      pLoop (Map.insert (LitDim name) power oldDim)
+      dim <- L.lexeme sc' (position pSingleDim)
+      pLoop (dim : oldDim)
 
-    pSingleDim :: Parser (String, Int)
+    pSingleDim :: Parser ParseDimensionPart
     pSingleDim = do
       name <- (:) <$> letterChar <*> many letterChar
       number <- (fromInteger <$> L.signed (pure ()) L.decimal) <|> return 1
-      return (name, number)
+      return (ParseDimensionPart name number)
 
 pConstant :: Parser () -> Parser PositionedExpression
-pConstant sc' = PositionedExpression <$> getPositionData <*> (PConstant <$> (pTypedList sc' <|> pTypedRecord sc' <|> pTypedNumber sc'))
+pConstant sc' = position (PConstant <$> (pTypedList sc' <|> pTypedRecord sc' <|> pTypedNumber sc'))
 
 pName :: Parser String
 pName = (:) <$> letterChar <*> many (alphaNumChar <|> char '_') <?> "name"
@@ -163,7 +176,7 @@ pTerm sc' =
     accessor :: PositionedExpression -> Parser PositionedExpression
     accessor expr = do
       _ <- char '.'
-      PositionedExpression <$> getPositionData <*> (PAccess expr <$> L.lexeme sc' pName)
+      L.lexeme sc' $ position (PAccess expr <$> pName)
 
 pLine :: Parser (Maybe Statement)
 pLine =
@@ -208,8 +221,7 @@ operatorTable :: Parser () -> [[Operator Parser PositionedExpression]]
 operatorTable sc' =
   [ [binary sc' "" (PBinOp App)],
     [binary sc' "^" (PBinOp Power)],
-    [ prefix sc' "-" PNegate,
-      prefix sc' "+" (\(PositionedExpression _ a) -> a)
+    [ prefix sc' "-" PNegate
     ],
     [ binary sc' "*" (PBinOp Mult),
       binary sc' "/" (PBinOp Div)
@@ -219,29 +231,32 @@ operatorTable sc' =
     ]
   ]
 
+position :: Parser a -> Parser (Positioned a)
+position parser = do
+  offset <- getOffset
+  x <- parser
+  newOffset <- getOffset
+  return (Positioned (PositionData offset (newOffset - offset)) x)
+
 binary :: Parser () -> Text -> (PositionedExpression -> PositionedExpression -> ParseExpression) -> Operator Parser PositionedExpression
 binary sc' name f =
   InfixL
     ( do
         L.symbol sc' name
-        pos <- getPositionData
-        return (\a b -> PositionedExpression pos (f a b))
+        return (combinePositions f)
     )
 
-prefix, postfix :: Parser () -> Text -> (PositionedExpression -> ParseExpression) -> Operator Parser PositionedExpression
+combinePositions :: (Positioned a -> Positioned b -> c) -> Positioned a -> Positioned b -> Positioned c
+combinePositions f a@(Positioned startPos@(PositionData startOffset _) _) b@(Positioned (PositionData start2 length) _) =
+  Positioned (PositionData startOffset ((start2 + length) - startOffset)) (f a b)
+
+prefix :: Parser () -> Text -> (PositionedExpression -> ParseExpression) -> Operator Parser PositionedExpression
 prefix sc' name f =
   Prefix
     ( do
+        offset <- getOffset
         L.symbol sc' name
-        pos <- getPositionData
-        return (PositionedExpression pos . f)
-    )
-postfix sc' name f =
-  Postfix
-    ( do
-        L.symbol sc' name
-        pos <- getPositionData
-        return (PositionedExpression pos . f)
+        return (\x@(Positioned (PositionData childOffset length) _) -> Positioned (PositionData offset ((childOffset + length) - offset)) (f x))
     )
 
 errorBundleToPedantError :: ShowErrorComponent b => ParseErrorBundle Text b -> NonEmpty PedantParseError
@@ -253,6 +268,8 @@ errorBundleToPedantError bundle =
               (parseErrorTextPretty err)
               (unPos column - 1)
               (unPos row - 1)
+              (unPos row - 1)
+              (unPos column)
               (errorBundlePretty bundle)
         )
         (bundleErrors bundle)

@@ -17,6 +17,7 @@ import Parser
 import Types
 
 data TypeError = TypeError PositionData String
+  deriving (Ord, Eq)
 
 data TypeCheckState = TypeCheckState
   { tcsEnv :: TypeEnv,
@@ -71,6 +72,7 @@ instance Types Dimension where
         case Map.lookup x (subDimensions s) of
           Just (NormDim substitution) -> combine map (Map.map (* power) substitution)
           Just (PowDim substitution) -> combine map (Map.map (* power) substitution)
+          Just (PolyDim newName) -> combine map (Map.singleton (PolyPrimDim newName) power)
           _ -> combine map (Map.singleton (PolyPrimDim x) power)
 
       combine :: Map.Map PrimitiveDim Int -> Map.Map PrimitiveDim Int -> Map.Map PrimitiveDim Int
@@ -92,15 +94,15 @@ instance Types Type where
   apply s (FuncType x y) = FuncType (apply s x) (apply s y)
   apply s (PolyNumericType n d) =
     case Map.lookup n (subTypes s) of
-      Just (PolyType _) ->
-        -- You cannot substitute a PolyNumeric for a PolyType. It's too general
-        PolyNumericType n d
+      Just (PolyType n2) ->
+        -- You cannot substitute a PolyNumeric for a PolyType. It's too general. Stick to PolyType
+        PolyNumericType n2 (apply s d)
       Just (ListType x) ->
         apply s (ListType (BaseDim d))
       Just (BaseDim x) ->
         apply s (BaseDim d)
       _ ->
-        PolyNumericType n d
+        PolyNumericType n (apply s d)
   apply s (BaseDim n) =
     BaseDim $ apply s n
   apply s (ListType n) =
@@ -373,9 +375,9 @@ foldSubst :: Traversable t => t Substitution -> Substitution
 foldSubst = foldr composeSubst nullSubst
 
 ti :: TypeCheckState -> PositionedExpression -> TI TypeCheckResult
-ti state (PositionedExpression pos expression) =
+ti state (Positioned pos expression) =
   let (TypeEnv env) = tcsEnv state
-      units = tcsUnits state
+      allowedUnits = tcsUnits state
    in case expression of
         PVariable n ->
           case Map.lookup n env of
@@ -389,12 +391,9 @@ ti state (PositionedExpression pos expression) =
             Just sigma -> do
               t <- instantiate sigma
               return $ TypeCheckResult nullSubst t (EVariable n)
-        PConstant (ParseNumber value dim) ->
-          let base = baseUnitsDim dim
-              missingUnits = Set.difference base units
-           in if Set.size missingUnits == 0
-                then return $ TypeCheckResult nullSubst (BaseDim dim) (EConstant $ ExecutionValueNumber value)
-                else throwError $ TypeError pos (concat ["units ", unwords (Set.toList missingUnits), " not declared. Try adding a \"unit ", unwords (Set.toList missingUnits), "\" statement before this line"])
+        PConstant (ParseNumber value pdim) -> do
+          dimension <- evaluateDimension allowedUnits pdim
+          return $ TypeCheckResult nullSubst (BaseDim dimension) (EConstant $ ExecutionValueNumber value)
         PConstant (ParseList list) -> do
           evaluations <- mapM (ti state) list
           case evaluations of
@@ -419,7 +418,9 @@ ti state (PositionedExpression pos expression) =
             tv <- newTyVar "a"
             TypeCheckResult sub1 type1 ex1 <- ti state e1
             TypeCheckResult sub2 type2 ex2 <- ti (apply sub1 state) e2
-            sub3 <- mgu pos (apply sub2 type1) (FuncType type2 tv)
+            sub3 <-
+              mgu pos (apply sub2 type1) (FuncType type2 tv)
+                `catchError` (\(TypeError pos err) -> throwError $ TypeError pos $ err ++ "\n while trying to apply " ++ show type1 ++ " to " ++ show type2 ++ " in " ++ show (PBinOp App e1 e2) ++ " original state " ++ show (tcsSubs state) ++ " sub1 " ++ show sub1 ++ " sub 2 " ++ show sub2 ++ " and when applied " ++ show (apply sub2 type1))
             return $ TypeCheckResult (sub3 `composeSubst` sub2 `composeSubst` sub1) (apply sub3 tv) (EBinOp App ex1 ex2)
         PBinOp op e1 e2 ->
           do
@@ -444,6 +445,20 @@ ti state (PositionedExpression pos expression) =
             s2 <- mgu pos negateType (t1 `FuncType` tv)
             return $ TypeCheckResult (s2 `composeSubst` s1) (apply s2 tv) (ENegate ex1)
 
+evaluateDimension :: Set.Set String -> ParseDimension -> TI Dimension
+evaluateDimension allowedUnits dim =
+  case dim of
+    PowParseDim components ->
+      PowDim <$> foldM addToDimensionMap Map.empty components
+    NormalParseDim components ->
+      NormDim <$> foldM addToDimensionMap Map.empty components
+  where
+    addToDimensionMap :: Map.Map PrimitiveDim Int -> Positioned ParseDimensionPart -> TI (Map.Map PrimitiveDim Int)
+    addToDimensionMap map (Positioned p (ParseDimensionPart name power)) =
+      if Set.member name allowedUnits
+        then return $ Map.insert (LitDim name) power map
+        else throwError $ TypeError p (concat ["unit ", name, " not declared. Try adding a \"unit ", name, "\" statement before this line"])
+
 normalDimPoly :: String -> Type
 normalDimPoly name = PolyNumericType "t" $ NormDim $ Map.singleton (PolyPrimDim name) 1
 
@@ -465,5 +480,5 @@ opDimension Add = Scheme ["a", "t"] $ normalDimPoly "a" `FuncType` (normalDimPol
 opDimension Sub = Scheme ["a", "t"] $ normalDimPoly "a" `FuncType` (normalDimPoly "a" `FuncType` normalDimPoly "a")
 opDimension Mult = Scheme ["a", "b", "t"] $ normalDimPoly "a" `FuncType` (normalDimPoly "b" `FuncType` normalDim [(PolyPrimDim "a", 1), (PolyPrimDim "b", 1)])
 opDimension Div = Scheme ["a", "b", "t"] $ normalDimPoly "a" `FuncType` (normalDimPoly "b" `FuncType` normalDim [(PolyPrimDim "a", 1), (PolyPrimDim "b", -1)])
-opDimension Power = Scheme ["a", "b", "t"] $ powerDimPoly "a" `FuncType` (normalDimPoly "b" `FuncType` powerDim [(PolyPrimDim "a", 1), (PolyPrimDim "b", -1)])
+opDimension Power = Scheme ["a", "b", "t"] $ powerDimPoly "a" `FuncType` (normalDimPoly "b" `FuncType` powerDim [(PolyPrimDim "a", 1), (PolyPrimDim "b", 1)])
 opDimension App = Scheme ["a", "b", "t"] $ ((PolyType "a" `FuncType` PolyType "b") `FuncType` PolyType "a") `FuncType` PolyType "b"

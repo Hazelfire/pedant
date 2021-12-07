@@ -219,5 +219,7 @@ data PedantParseError = PedantParseError
   { ppeErrString :: String,
     ppeColumn :: Int,
     ppeRow :: Int,
+    ppeEndColumn :: Int,
+    ppeEndRow :: Int,
     ppePrint :: String
   }

@@ -15,6 +15,7 @@ import Data.Maybe
 import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
+import Debug.Trace
 import LSP
 import qualified Language.LSP.Types as LSP
 import Parser
@@ -23,14 +24,12 @@ import Text.Megaparsec
 import TypeCheck
 import Types
 
-newtype SimpleError = SimpleError String
-  deriving (Eq, Ord)
-
-instance ShowErrorComponent SimpleError where
-  showErrorComponent (SimpleError s) = s
+instance ShowErrorComponent TypeError where
+  showErrorComponent (TypeError _ s) = s
+  errorComponentLen (TypeError (PositionData _ length) _) = length
 
 pedantError :: TypeError -> String -> Text -> PedantParseError
-pedantError (TypeError (PositionData offset) err) name contents =
+pedantError te@(TypeError (PositionData offset length) err) name contents =
   let initialPosState =
         PosState
           { pstateInput = contents,
@@ -39,13 +38,15 @@ pedantError (TypeError (PositionData offset) err) name contents =
             pstateTabWidth = defaultTabWidth,
             pstateLinePrefix = ""
           }
-      ([(a, sourcePos)], posState) = attachSourcePos id [offset] initialPosState
-      newPosState = initialPosState {pstateSourcePos = sourcePos, pstateInput = contents, pstateOffset = 0}
-      error = ParseErrorBundle (FancyError offset (Set.singleton (ErrorCustom (SimpleError err))) :| []) newPosState
+      ([(a, sourcePos), (_, endSourcePos)], posState) = attachSourcePos id [offset, offset + length] initialPosState
+      newPosState = initialPosState {pstateInput = contents, pstateOffset = 0}
+      error = ParseErrorBundle (FancyError offset (Set.singleton (ErrorCustom te)) :| []) newPosState
    in PedantParseError
         { ppeErrString = err,
-          ppeColumn = unPos $ sourceColumn sourcePos,
-          ppeRow = unPos $ sourceLine sourcePos,
+          ppeColumn = unPos (sourceColumn sourcePos) - 1,
+          ppeRow = unPos (sourceLine sourcePos) - 1,
+          ppeEndColumn = unPos (sourceColumn endSourcePos) - 1,
+          ppeEndRow = unPos (sourceLine endSourcePos) - 1,
           ppePrint = errorBundlePretty error
         }
 
@@ -66,7 +67,7 @@ getErrors name = do
 parseErrorToDiagnostic :: PedantParseError -> LSP.Diagnostic
 parseErrorToDiagnostic err =
   LSP.Diagnostic
-    (LSP.Range (LSP.Position (ppeColumn err) (ppeRow err)) (LSP.Position (ppeColumn err) (ppeRow err + 1)))
+    (LSP.Range (LSP.Position (ppeRow err) (ppeColumn err)) (LSP.Position (ppeEndRow err) (ppeEndColumn err)))
     (Just LSP.DsError)
     Nothing -- code
     (Just "lsp-ped") -- source
