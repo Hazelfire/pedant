@@ -6,7 +6,9 @@ import Control.Monad.Except
 import Control.Monad.Identity
 import Control.Monad.State
 import qualified Data.Bifunctor as Bifunctor
+import Data.Char
 import qualified Data.Either as Either
+import qualified Data.List as List
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import qualified Data.Map as Map
 import qualified Data.Map.Ordered as OMap
@@ -114,6 +116,40 @@ instance Types Type where
     DictType (Map.map (apply s) n)
 
 data Scheme = Scheme [String] Type
+
+prettyPrintPrimitive :: PrimitiveDim -> String
+prettyPrintPrimitive (LitDim s) = s
+prettyPrintPrimitive (PolyPrimDim s) = "'" ++ s
+
+prettyPrintDimension :: Dimension -> String
+prettyPrintDimension (NormDim dim) =
+  if Map.empty == dim
+    then "1"
+    else unwords $ map (\(name, amount) -> if amount == 1 then prettyPrintPrimitive name else prettyPrintPrimitive name ++ show amount) (List.sortOn (negate . snd) (Map.toList dim))
+prettyPrintDimension (PowDim dim) =
+  if Map.empty == dim
+    then "1"
+    else ("^" ++) $ unwords $ map (\(name, amount) -> if amount == 1 then prettyPrintPrimitive name else prettyPrintPrimitive name ++ show amount) (List.sortOn (negate . snd) (Map.toList dim))
+prettyPrintDimension (PolyDim dim) = "'" ++ dim
+
+prettyPrintType :: Type -> String
+prettyPrintType (BaseDim s) = prettyPrintDimension s
+prettyPrintType (PolyNumericType n s) = prettyPrintDimension s
+prettyPrintType (DictType d) =
+  "{" ++ List.intercalate "," (map (\(key, value) -> key ++ ":" ++ prettyPrintType value) (Map.toAscList d)) ++ "}"
+prettyPrintType (ListType s) = "[" ++ prettyPrintType s ++ "]"
+prettyPrintType (PolyDictType d) =
+  "{|" ++ List.intercalate "," (map (\(key, value) -> key ++ ":" ++ prettyPrintType value) (Map.toAscList d)) ++ "}"
+prettyPrintType (PolyType s) = "'" ++ s
+prettyPrintType (FuncType x y) =
+  prettyPrintType x ++ " -> " ++ prettyPrintType y
+
+prettyPrintScheme :: Scheme -> String
+prettyPrintScheme s@(Scheme vars t) =
+  let typeNames = imap (\i v -> (v, PolyType [chr (ord 'a' + i)])) vars
+      dimNames = imap (\i v -> (v, PolyDim [chr (ord 'a' + i)])) vars
+      sub = Substitution {subTypes = Map.fromList typeNames, subDimensions = Map.fromList dimNames}
+   in prettyPrintType $ apply sub t
 
 instance Show Scheme where
   show (Scheme [] t) = show t
@@ -352,7 +388,7 @@ typeCheck tcState statements =
               env'' = TypeEnv (env' `Map.union` Map.fromList mapPairs)
           TypeCheckResult s1 t1 ex <- ti (state {tcsEnv = env''}) (assignmentExpression assignment)
 
-          let varType = foldl (\acc (_, Scheme _ tv) -> apply s1 tv `FuncType` acc) (apply s1 t1) mapPairs
+          let varType = foldr (\(_, Scheme _ tv) acc -> apply s1 tv `FuncType` acc) (apply s1 t1) mapPairs
               name = assignmentName assignment
               TypeEnv env' = remove name env
               t' = generalize (apply s1 env) varType

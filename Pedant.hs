@@ -68,7 +68,7 @@ getTypes name = do
                               TypeEnv map ->
                                 case Map.lookup (assignmentName assignment) map of
                                   Just scheme ->
-                                    Just (offset, show scheme)
+                                    Just (offset, prettyPrintScheme scheme)
                                   _ -> Nothing
                       _ -> Nothing
                   )
