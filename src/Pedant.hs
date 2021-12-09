@@ -1,7 +1,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
--- | The parser for dimensional, a small dimensional programming language
+-- | The parser for pedant, a small dimensional programming language
 module Pedant where
 
 import Control.Monad
@@ -136,7 +136,7 @@ pedantMain = do
               let diag = pedantError err name contents
               putStrLn (ppePrint diag)
         Left b -> putStrLn (ppePrint (NonEmpty.head b))
-    _ -> putStrLn "dimensional [file]"
+    _ -> putStrLn "pedant [file]"
   where
     envLookup :: String -> TypeEnv -> Maybe Scheme
     envLookup key (TypeEnv d) = Map.lookup key d

@@ -10,6 +10,17 @@ I'm planning to add stats and constraints on stats in the future.
 It might be better to think of pedant as a replacement for excel rather than a
 programming language.
 
+# Compiling and running this project.
+
+To run this project, you will need cabal and ghc. Simply run:
+
+```
+stack build
+stack run
+```
+
+You can also use nix. A shell.nix is provided with the project.
+
 # Basic syntax
 The syntax of pedant is really simple to learn. It's simply a collection of
 math formulas. It would be easier to understand by simply looking at the examples
@@ -46,7 +57,7 @@ There is also one inbuilt function currently available, the natural logarithm: `
 Functions are applied by whitespace, like functional languages such as Haskell. 
 For instance `ln 5`.
 
-Paranthesis can be used to impact the order of operations. Order of operations
+Parentheses can be used to impact the order of operations. Order of operations
 follow BODMAS, as you would expect.
 
 When declaring a value, only values higher up in the file can be referenced.
