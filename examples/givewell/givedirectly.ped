@@ -42,7 +42,7 @@ future_increase_in_ln_consumption =
 discount_rate = 1.04 ^years-1
 duration_of_investment = 10 years
 pv payment discount duration = 
-  payment * (1 - (discount ^ (-duration))) / ln discount_rate
+  payment * (1 -  discount ^ (-duration)) / ln discount
 pv_of_investment = pv future_increase_in_ln_consumption discount_rate (duration_of_investment - (1 years))
 percent_of_investment_returned = 0.2
 duration_of_end_of_benefits = 1 years

@@ -2,7 +2,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | The parser for dimensional, a small dimensional programming language
-module Test where
+module Pedant where
 
 import Control.Monad
 import qualified Data.Bifunctor as Bifunctor
@@ -113,8 +113,8 @@ parseErrorToDiagnostic err =
     (Just (LSP.List []))
 
 -- | Main Function
-main :: IO ()
-main = do
+pedantMain :: IO ()
+pedantMain = do
   args <- Env.getArgs
   case args of
     ("lsp" : _) -> do

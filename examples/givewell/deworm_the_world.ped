@@ -1,0 +1,132 @@
+// Deworm the World
+treatement_effect = 0.109
+treatement_coverage = 0.75
+treatment_control = 0.05
+estimated_treatement = treatment_effect  / ((treatment_coverage - treatment_control) - treatment_effect * treatment_control)
+replicability_adjustment = 0.13
+adjustment_for_years_of_treatement = 0.9
+additional_years_of_treatment = 2.41
+estimated_annual_treatment = estimated_treatement * replicability_adjustment / additional_years_of_treatment * adjustment_for_years_of_treatement
+
+discount_rate = 1.04
+average_years_deworming_long_term = 8
+benefit_of_one_year = estimated_annual_treatment / (discount_rate ^ average_years_deworming_long_term)
+duration_of_long_term_benifits = 40
+
+pv_of_lifetime_benefits = benefit_of_one_year * (1 - (discount_rate ^ (-(duration_of_long_term_benifits)))) / (ln discount_rate)
+
+multiplier_for_resource_sharing_within_households = 2
+adjusted_long_term_benefits = pv_of_lifetime_benefits * multiplier_for_resource_sharing_within_households
+
+percent_allocated_each_country = [0.3567755983, 0.04274711779, 0.1023037306, 0.09573907075, 0.09989506006]
+total_costs_covered_by_dtw = [ 0.6615351534, 0.6062993536, 0.589803699, 0.6270353205, 0.6220757006 ]
+total_costs_covered_philanthropy = [0, 0.01847612766, 0.01217006489, 0, 0.02311365514]
+total_costs_covered_governments_financial = [0, 0.0003790082282, 0, 0, 0]
+total_costs_covered_governments_in_kind = 0.3
+total_costs_covered_drug_donations = [0.03846484661, 0.07484545534, 0.0980261853, 0.07296462213, 0.05481063817]
+
+donation_size = 10000
+donation_to_each_country = donation_size * percent_allocated_each_country
+total_spending_all_contributors = donation_to_each_country / total_costs_covered_by_dtw
+proportion_of_deworming_going_to_children = 1
+worm_burden_adjustment = [0.02913396089, 0.04541513563, 0.110400789, 0.178456373, 0.08326108198]
+pv_of_lifetime_burden_adjusted = worm_burden_adjustment * proportion_of_deworming_going_to_children * adjusted_long_term_benefits
+value_of_ln_consumption = 1.44 value people-1 years-1
+value_of_deworming = value_of_ln_consumption * pv_of_lifetime_burden_adjusted
+cost_per_child_dewormed = [ 0.6229606886, 0.9687729239, 0.8573351642, 1.518246103, 0.7480077174 ]
+total_children_dewormed = total_spending_all_contributors / cost_per_child_dewormed
+
+value_generated = total_children_dewormed * value_of_deworming
+
+risk_of_double_treatment = 0
+risk_of_ineffective_goods = 0.02
+ris_of_goods_not_reaching_recipients = 0
+total_waste_risk = risk_of_double_treatment + risk_of_ineffective_goods + ris_of_goods_not_reaching_recipients
+
+risk_misappropriation_without_monitoring = 0.01
+risk_false_monitoring_results = 0
+total_adjustment_monitoring = risk_misappropriation_without_monitoring + risk_false_monitoring_results
+
+
+risk_change_of_priorities = 0
+risk_non_funding_bottlenecks = 0
+within_org_fungibility = 0.05
+total_adjustment_unintented_purpose = risk_change_of_priorities * risk_non_funding_bottlenecks * within_org_fungibility
+total_downside_adjustment = 1 - total_adjustment_monitoring - total_waste_risk - total_adjustment_unintented_purpose
+
+risk_adjusted_value_generated = total_downside_adjustment * value_generated
+
+total_units_of_value_generated_after_downside = total_downside_adjustment * total_units_of_value
+
+// Excluded Effects
+direct_health_effects = 0.008
+hiv_reduction = 0.06
+possible_increases_in_diseases_of_affluence = -0.025
+averted_mortality = 0.035
+short_term_anemia_effects = 0.09
+investment_of_income_increases = 0.1
+non_income_long_run_benefits_of_deworming = 0.04
+drug_resistance = -0.04
+unprogrammed_deworming = -0.14
+marginal_funding_goes_to_lower_priority_areas = -0.025
+general_equilibrium_effects = -0.03
+total_adjustment_effects = 1 + direct_health_effects + hiv_reduction + possible_increases_in_diseases_of_affluence + averted_mortality + short_term_anemia_effects + investment_of_income_increases + non_income_long_run_benefits_of_deworming + drug_resistance + unprogrammed_deworming + marginal_funding_goes_to_lower_priority_areas + general_equilibrium_effects
+
+value_after_excluded_effects = total_adjustment_effects * total_units_of_value_generated_after_downside
+
+value_per_dollar = value_after_excluded_effects / donation_to_each_country
+
+cost_per_treatement_dwt = cost_per_child_dewormed * total_costs_covered_by_dtw
+cost_per_treatement_philanthropy = cost_per_child_dewormed * total_costs_covered_philanthropy
+cost_per_treatment_goverment_financial = cost_per_child_dewormed * total_costs_covered_financial
+cost_per_treatment_goverment_in_kind = cost_per_child_dewormed * total_costs_covered_in_kind
+cost_per_treatment_drug_donations = cost_per_child_dewormed * total_costs_covered_drug_donations
+
+total_cost_per_treatment = cost_per_treatement_dwt + cost_per_treatement_philanthropy + cost_per_treatment_goverment_financial + cost_per_treatment_goverment_in_kind + cost_per_treatment_drug_donations
+
+total_expenditure_dwt = total_spending_all_contributors * total_costs_covered_by_dtw
+total_expenditure_philanthropy = total_spending_all_contributors * total_costs_covered_philanthropy
+total_expenditure_goverment_financial = total_spending_all_contributors * total_costs_covered_financial
+total_expenditure_goverment_in_kind = total_spending_all_contributors * total_costs_covered_in_kind
+total_expenditure_drug_donations = total_spending_all_contributors * total_costs_covered_drug_donations
+total_expenditure = total_expenditure_dwt + total_expenditure_philanthropy + total_expenditure_goverment_in_kind + total_expenditure_goverment_financial + total_expenditure_drug_donations
+
+expenditure_causally_downstream = total_expenditure_dwt + total_expenditure_philanthropy + total_expenditure_goverment_financial
+
+// I am very confused.... this seems like a mistake
+value_averting_death_individual_from_malaria = 117
+
+conterfactual_government_financial_costs =  value_averting_death_individual_from_malaria / 32386.43361
+counterfactual_government_in_kind_costs = value_averting_death_individual_from_malaria  / 32386.43361
+counterfactual_donated_drug_costs = value_averting_death_individual_from_malaria  / 21476.62938
+
+chance_government_costs_replace_philanthropic_costs = 0.2
+chance_distribution_unfunded = 0.8
+
+fraction_government_costs_replace_philanthropic_costs = 1
+fraction_distribution_unfunded = 0.8
+
+change_in_funding_goverment_replace_philanthropy_goverment_financial = total_expenditure_dwt + total_expenditure_philanthropy
+change_in_funding_goverment_replace_philanthropy_goverment_in_kind = 0
+change_in_funding_goverment_replace_philanthropy_donated_drugs = 0
+
+change_in_funding_distribution_unfunded_goverment_financial = 0
+change_in_funding_distribution_unfunded_goverment_in_kind = - total_expenditure_goverment_in_kind
+change_in_funding_distribution_unfunded_goverment_drugs = -total_expenditure_drug_donations
+
+value_generated_non_philanthropy_goverment_replace_philanthropy_goverment_financial = value_per_dollar * change_in_funding_goverment_replace_philanthropy_goverment_financial
+value_generated_non_philanthropy_goverment_replace_philanthropy_goverment_in_kind = value_per_dollar * change_in_funding_goverment_replace_philanthropy_goverment_in_kind
+value_generated_non_philanthropy_goverment_replace_philanthropy_goverment_drugs = value_per_dollar * change_in_funding_goverment_replace_philanthropy_donated_drugs
+
+value_generated_non_philanthropy_distribution_unfunded_goverment_financial = value_per_dollar * change_in_funding_distribution_unfunded_goverment_financial
+value_generated_non_philanthropy_distribution_unfunded_goverment_in_kind = value_per_dollar * change_in_funding_distribution_unfunded_goverment_in_kind
+value_generated_non_philanthropy_distribution_unfunded_donated_drugs = value_per_dollar * change_in_funding_distribution_unfunded_donated_drugs
+
+value_generated_counterfactual_non_philanthropy_goverment_replace_philanthropy_goverment_financial = - counterfactual_government_financial_costs * change_in_funding_distribution_unfunded_goverment_financial
+value_generated_non_philanthropy_goverment_replace_philanthropy_goverment_in_kind = - counterfactual_government_in_kind_costs * change_in_funding_distribution_unfunded_goverment_in_kind
+value_generated_non_philanthropy_goverment_replace_philanthropy_donated_drugs = - counterfactual_donated_drug_costs * change_in_funding_distribution_unfunded_donated_drugs
+
+value_generated_counterfactual_non_philanthropy_distribution_unfunded_goverment_financial = - counterfactual_government_financial_costs * change_in_funding_distribution_unfunded_goverment_financial
+value_generated_non_philanthropy_distribution_unfunded_goverment_in_kind = - counterfactual_government_in_kind_costs * change_in_funding_distribution_unfunded_goverment_in_kind
+value_generated_non_philanthropy_distribution_unfunded_donated_drugs = - counterfactual_donated_drug_costs * change_in_funding_distribution_unfunded_donated_drugs
+

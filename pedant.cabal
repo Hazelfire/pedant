@@ -1,0 +1,67 @@
+cabal-version: 1.12
+
+-- This file has been generated from package.yaml by hpack version 0.34.4.
+--
+-- see: https://github.com/sol/hpack
+
+name:               pedant
+version:            0.1.0.0
+synopsis:           A Math language for Dimensional Analysis
+description:        See README at <https://github.com/sol/hpack#readme>
+category:           Economics
+homepage:           https://github.com/Hazelfire/pedant#readme
+bug-reports:        https://github.com/Hazelfire/pedant/issues
+maintainer:         Sam Nolan <samnolan555@gmail.com>
+build-type:         Simple
+extra-source-files:
+      CHANGELOG.md
+
+source-repository head
+    type: git
+    location: https://github.com/Hazelfire/pedant
+
+library
+    exposed-modules:
+          Pedant
+    other-modules:
+          LSP
+          Parser
+          TypeCheck
+          Types
+          Paths_pedant
+    hs-source-dirs:
+          src
+    ghc-options: -Wall
+    build-depends:
+          base >=4.9 && <5
+        , containers
+        , hslogger
+        , lens
+        , lsp
+        , megaparsec
+        , mtl
+        , ordered-containers
+        , parser-combinators
+        , text
+    default-language: Haskell2010
+
+executable pedant
+    main-is: Main.hs
+    other-modules:
+          Paths_pedant
+    build-depends:
+          base >=4.9 && <5
+        , containers
+        , hslogger
+        , lens
+        , lsp
+        , megaparsec
+        , mtl
+        , ordered-containers
+        , parser-combinators
+        , pedant
+        , text
+    hs-source-dirs:
+          app
+    ghc-options: -Wall
+    default-language: Haskell2010

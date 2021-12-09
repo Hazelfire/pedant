@@ -1,0 +1,3 @@
+unit meters seconds
+ok = 4 meters * 2 seconds
+nonsense = 4 meters + 2 seconds
