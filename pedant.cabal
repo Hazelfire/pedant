@@ -24,10 +24,12 @@ library
     exposed-modules:
           Pedant
     other-modules:
-          LSP
-          Parser
-          TypeCheck
-          Types
+          Pedant.FileResolver
+          Pedant.InBuilt
+          Pedant.LSP
+          Pedant.Parser
+          Pedant.TypeCheck
+          Pedant.Types
           Paths_pedant
     hs-source-dirs:
           src

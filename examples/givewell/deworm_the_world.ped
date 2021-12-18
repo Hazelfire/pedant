@@ -1,4 +1,3 @@
-// Deworm the World
 treatement_effect = 0.109
 treatement_coverage = 0.75
 treatment_control = 0.05
@@ -128,5 +127,5 @@ value_generated_non_philanthropy_goverment_replace_philanthropy_donated_drugs = 
 
 value_generated_counterfactual_non_philanthropy_distribution_unfunded_goverment_financial = - counterfactual_government_financial_costs * change_in_funding_distribution_unfunded_goverment_financial
 value_generated_non_philanthropy_distribution_unfunded_goverment_in_kind = - counterfactual_government_in_kind_costs * change_in_funding_distribution_unfunded_goverment_in_kind
-value_generated_non_philanthropy_distribution_unfunded_donated_drugs = - counterfactual_donated_drug_costs * change_in_funding_distribution_unfunded_donated_drugs
+value_generated_non_philanthropy_distribution_unfunded_donated_drugs = (- counterfactual_donated_drug_costs) * change_in_funding_distribution_unfunded_donated_drugs
 

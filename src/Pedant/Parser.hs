@@ -1,7 +1,8 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TupleSections #-}
 
 -- | The parser for pedant. Creates a syntax tree from the file
-module Parser
+module Pedant.Parser
   ( parseProgram,
     PedantParseError (..),
     Positioned (..),
@@ -9,7 +10,6 @@ module Parser
     ParseDimensionPart (..),
     ParseDimension (..),
     ParseLiteral (..),
-    PositionedExpression (..),
     PositionData (..),
     ParseExpression (..),
     Assignment (..),
@@ -20,28 +20,30 @@ where
 import Control.Monad.Combinators.Expr
 import qualified Data.Bifunctor as Bifunctor
 import qualified Data.List as List
-import Data.List.NonEmpty (NonEmpty ((:|)))
+import Data.List.NonEmpty (NonEmpty)
 import qualified Data.Map as Map
-import Data.Maybe
+import Data.Maybe (catMaybes)
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Void
+import Data.Void (Void)
+import qualified Pedant.InBuilt as InBuilt
+import Pedant.Types (Operation (..), PedantParseError (..), PrettyPrint (..))
 import Text.Megaparsec
 import Text.Megaparsec.Char
 import qualified Text.Megaparsec.Char.Lexer as L
-import Types (Dimension (..), Operation (..), PedantParseError (..), PrimitiveDim (..), Type (..))
 
 -- | We now define a parser for this typed language
 data Assignment = Assignment
-  { assignmentName :: String,
-    assignmentArguments :: [String],
+  { assignmentName :: T.Text,
+    assignmentArguments :: [T.Text],
     assignmentExpression :: PositionedExpression
   }
   deriving (Show)
 
 data Statement
   = AssignmentStatement Assignment
-  | UnitStatement [String]
+  | UnitStatement [T.Text]
+  | ImportStatement T.Text [T.Text]
 
 data PositionData = PositionData Int Int
   deriving (Show, Eq, Ord)
@@ -49,32 +51,68 @@ data PositionData = PositionData Int Int
 data Positioned a = Positioned PositionData a
   deriving (Show)
 
+instance Eq a => Eq (Positioned a) where
+  (==) (Positioned a1 b1) (Positioned a2 b2) = a1 == a2 && b1 == b2
+
+instance Functor Positioned where
+  fmap f (Positioned p x) = Positioned p (f x)
+
 type PositionedExpression = Positioned ParseExpression
 
 data ParseDimensionPart = ParseDimensionPart
-  { pdpName :: String,
+  { pdpName :: T.Text,
     pdpPower :: Int
   }
-  deriving (Show)
+  deriving (Show, Eq)
+
+instance PrettyPrint ParseDimensionPart where
+  pPrint (ParseDimensionPart name power) =
+    if power == 1
+      then name
+      else T.concat [name, T.pack (show power)]
 
 data ParseDimension
   = PowParseDim [Positioned ParseDimensionPart]
   | NormalParseDim [Positioned ParseDimensionPart]
-  deriving (Show)
+  deriving (Show, Eq)
+
+instance PrettyPrint ParseDimension where
+  pPrint (NormalParseDim parts) = T.unwords (map pPrint parts)
+  pPrint (PowParseDim parts) = "^" <> T.unwords (map pPrint parts)
 
 data ParseLiteral
   = ParseNumber Double ParseDimension
-  | ParseList [PositionedExpression]
-  | ParseRecord (Map.Map String PositionedExpression)
-  deriving (Show)
+  | ParseEmptyList
+  | ParseRecord (Map.Map T.Text PositionedExpression)
+  deriving (Show, Eq)
+
+instance PrettyPrint ParseLiteral where
+  pPrint (ParseNumber num dim) = T.unwords [T.pack $ show num, pPrint dim]
+  pPrint ParseEmptyList = "[]"
+  pPrint (ParseRecord op) =
+    T.concat
+      [ "{",
+        T.intercalate ", " (map (\(key, value) -> T.concat [key, " = ", pPrint value]) (Map.toAscList op)),
+        "}"
+      ]
 
 data ParseExpression
-  = PBinOp Operation PositionedExpression PositionedExpression
-  | PVariable String
+  = PBinOp T.Text PositionedExpression PositionedExpression
+  | PVariable T.Text
   | PConstant ParseLiteral
-  | PNegate PositionedExpression
-  | PAccess PositionedExpression String
-  deriving (Show)
+  | PPrefix T.Text PositionedExpression
+  | PAccess PositionedExpression T.Text
+  deriving (Show, Eq)
+
+instance PrettyPrint a => PrettyPrint (Positioned a) where
+  pPrint (Positioned _ a) = pPrint a
+
+instance PrettyPrint ParseExpression where
+  pPrint (PBinOp op e1 e2) = T.unwords [pPrint e1, op, pPrint e2]
+  pPrint (PVariable var) = var
+  pPrint (PConstant lit) = pPrint lit
+  pPrint (PPrefix op e1) = T.concat [op, pPrint e1]
+  pPrint (PAccess e1 att) = T.concat [pPrint e1, att]
 
 data Function = NaturalLogarithm
   deriving (Show)
@@ -91,17 +129,8 @@ sc =
 lexeme :: Parser a -> Parser a
 lexeme = L.lexeme sc
 
-foldLexeme :: Parser a -> Parser a
-foldLexeme = L.lexeme scn
-
 symbol :: Text -> Parser Text
 symbol = L.symbol sc
-
-integer :: Parser Integer
-integer = lexeme L.decimal
-
-float :: Parser Double
-float = lexeme L.float
 
 parens :: Parser a -> Parser a
 parens = between (symbol "(") (symbol ")")
@@ -114,23 +143,31 @@ pTypedNumber sc' = do
   num <- L.lexeme sc (try L.float <|> L.decimal)
   ParseNumber num <$> parseDimension sc'
 
-pTypedList :: Parser () -> Parser ParseLiteral
+-- Lists are parsed as an empty list with all elements concatenated into them
+pTypedList :: Parser () -> Parser ParseExpression
 pTypedList sc' = do
   _ <- L.lexeme sc' (char '[')
-  ParseList <$> startList
+  choice
+    [ PConstant ParseEmptyList <$ L.lexeme sc' (char ']'),
+      startList
+    ]
   where
-    startList :: Parser [PositionedExpression]
+    startList :: Parser ParseExpression
     startList = do
       num <- L.lexeme sc' $ pExpr sc'
-      rest <- ([] <$ L.lexeme sc' (char ']')) <|> (L.lexeme sc' (char ',') >> startList)
-      return (num : rest)
+      choice
+        [ do
+            _ <- L.lexeme sc' (char ',')
+            PBinOp ":" num <$> position startList,
+          PConstant ParseEmptyList <$ L.lexeme sc' (char ']')
+        ]
 
 pTypedRecord :: Parser () -> Parser ParseLiteral
 pTypedRecord sc' = do
   _ <- L.lexeme sc' (char '{')
   ParseRecord . Map.fromList <$> startRecord
   where
-    startRecord :: Parser [(String, PositionedExpression)]
+    startRecord :: Parser [(T.Text, PositionedExpression)]
     startRecord = do
       name <- L.lexeme sc' pName
       _ <- L.lexeme sc' $ char '='
@@ -152,14 +189,14 @@ parseDimension sc' = (PowParseDim <$> try (char '^' *> parseNextDim [])) <|> (No
     pSingleDim :: Parser ParseDimensionPart
     pSingleDim = do
       name <- (:) <$> letterChar <*> many letterChar
-      number <- (fromInteger <$> L.signed (pure ()) L.decimal) <|> return 1
-      return (ParseDimensionPart name number)
+      number <- fromInteger <$> L.signed (pure ()) L.decimal <|> return 1
+      return (ParseDimensionPart (T.pack name) number)
 
 pConstant :: Parser () -> Parser PositionedExpression
-pConstant sc' = position (PConstant <$> (pTypedList sc' <|> pTypedRecord sc' <|> pTypedNumber sc'))
+pConstant sc' = position (pTypedList sc' <|> PConstant <$> (pTypedRecord sc' <|> pTypedNumber sc'))
 
-pName :: Parser String
-pName = (:) <$> letterChar <*> many (alphaNumChar <|> char '_') <?> "name"
+pName :: Parser T.Text
+pName = T.pack <$> ((:) <$> letterChar <*> many (alphaNumChar <|> char '_') <?> "name")
 
 pTerm :: Parser () -> Parser PositionedExpression
 pTerm sc' =
@@ -191,12 +228,35 @@ program = catMaybes <$> many (sc *> pLine <* newline) <* eof
 pStatement :: Parser Statement
 pStatement = L.lineFold scn $ \sc' ->
   let new_space_consumer = try sc' <|> sc
-   in pUnit new_space_consumer <|> (AssignmentStatement <$> pAssignment new_space_consumer)
+   in choice
+        [ pUnit new_space_consumer,
+          AssignmentStatement <$> pAssignment new_space_consumer,
+          pImport new_space_consumer
+        ]
+
+pImport :: Parser () -> Parser Statement
+pImport sc' = do
+  _ <- L.lexeme sc' (symbol "import")
+  fileName <- L.lexeme sc' pName
+  _ <- L.lexeme sc' (symbol "(")
+  ImportStatement fileName <$> pImportList
+  where
+    pImportList :: Parser [T.Text]
+    pImportList = do
+      importName <- L.lexeme sc' pName
+      choice
+        [ do
+            _ <- L.lexeme sc' (symbol ",")
+            (importName :) <$> pImportList,
+          do
+            _ <- L.lexeme sc' (symbol ")")
+            return [importName]
+        ]
 
 pUnit :: Parser () -> Parser Statement
 pUnit sc' = do
-  L.lexeme sc (symbol "unit")
-  UnitStatement <$> (pName `sepBy1` sc)
+  _ <- L.lexeme sc' (symbol "unit")
+  UnitStatement <$> (pName `sepBy1` sc')
 
 pAssignment :: Parser () -> Parser Assignment
 pAssignment sc' = do
@@ -219,17 +279,11 @@ pExpr sc' =
 
 operatorTable :: Parser () -> [[Operator Parser PositionedExpression]]
 operatorTable sc' =
-  [ [binary sc' "" (PBinOp App)],
-    [binary sc' "^" (PBinOp Power)],
-    [ prefix sc' "-" PNegate
-    ],
-    [ binary sc' "*" (PBinOp Mult),
-      binary sc' "/" (PBinOp Div)
-    ],
-    [ binary sc' "+" (PBinOp Add),
-      binary sc' "-" (PBinOp Sub)
-    ]
-  ]
+  let prefixOps = map (\op -> (InBuilt.opPrecedence op, prefix sc' (InBuilt.opName op) (PPrefix (InBuilt.opName op)))) InBuilt.inBuiltPrefixOperations
+      binaryOps = map (\op -> (InBuilt.opPrecedence op, binary sc' (InBuilt.opName op) (PBinOp (InBuilt.opName op)))) InBuilt.inBuiltBinaryOperations
+      combinedOps = prefixOps ++ binaryOps
+      sortedOps = List.groupBy (\a b -> fst a == fst b) (List.sortOn fst combinedOps)
+   in map (map snd) sortedOps
 
 position :: Parser a -> Parser (Positioned a)
 position parser = do
@@ -242,21 +296,21 @@ binary :: Parser () -> Text -> (PositionedExpression -> PositionedExpression -> 
 binary sc' name f =
   InfixL
     ( do
-        L.symbol sc' name
+        _ <- L.symbol sc' name
         return (combinePositions f)
     )
 
 combinePositions :: (Positioned a -> Positioned b -> c) -> Positioned a -> Positioned b -> Positioned c
-combinePositions f a@(Positioned startPos@(PositionData startOffset _) _) b@(Positioned (PositionData start2 length) _) =
-  Positioned (PositionData startOffset ((start2 + length) - startOffset)) (f a b)
+combinePositions f a@(Positioned (PositionData startOffset _) _) b@(Positioned (PositionData start2 l) _) =
+  Positioned (PositionData startOffset ((start2 + l) - startOffset)) (f a b)
 
 prefix :: Parser () -> Text -> (PositionedExpression -> ParseExpression) -> Operator Parser PositionedExpression
 prefix sc' name f =
   Prefix
     ( do
         offset <- getOffset
-        L.symbol sc' name
-        return (\x@(Positioned (PositionData childOffset length) _) -> Positioned (PositionData offset ((childOffset + length) - offset)) (f x))
+        _ <- L.symbol sc' name
+        return (\x@(Positioned (PositionData childOffset l) _) -> Positioned (PositionData offset ((childOffset + l) - offset)) (f x))
     )
 
 errorBundleToPedantError :: ShowErrorComponent b => ParseErrorBundle Text b -> NonEmpty PedantParseError

@@ -1,19 +1,19 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module LSP (runLSP) where
+module Pedant.LSP (runLSP) where
 
 import Control.Lens hiding (Iso)
 import Control.Monad (void)
 import Control.Monad.IO.Class
 import qualified Data.Map as Map
 import qualified Data.Text as T
-import Language.LSP.Diagnostics hiding (LSP)
-import Language.LSP.Server hiding (LSP)
+import Language.LSP.Diagnostics
+import Language.LSP.Server
 import qualified Language.LSP.Types as LSP
 import qualified Language.LSP.Types.Lens as LSPL
 import System.Log.Logger
 
-handlers :: (String -> IO [LSP.Diagnostic]) -> (String -> IO (Map.Map Int String)) -> Handlers (LspM ())
+handlers :: (String -> IO [LSP.Diagnostic]) -> (String -> IO (Map.Map Int T.Text)) -> Handlers (LspM ())
 handlers getErrors getTypes =
   mconcat
     [ notificationHandler LSP.SInitialized $ \_msg -> do
@@ -35,11 +35,9 @@ handlers getErrors getTypes =
             case filename of
               Just f -> do
                 types <- liftIO (getTypes f)
-                let cmd = LSP.Command "Say hello" "lsp-say-hello" Nothing
-                    cmd2 = LSP.Command "Say goodbye" "lsp-say-goodbye" Nothing
-                    rsp =
+                let rsp =
                       LSP.List
-                        (map (\(line, message) -> LSP.CodeLens (LSP.mkRange line 0 0 100) (Just (LSP.Command (T.pack message) "lsp-type" Nothing)) Nothing) (Map.toList types))
+                        (map (\(line, message) -> LSP.CodeLens (LSP.mkRange line 0 0 100) (Just (LSP.Command message "lsp-type" Nothing)) Nothing) (Map.toList types))
                 responder (Right rsp)
               Nothing ->
                 responder (Right $ LSP.List []),
@@ -65,7 +63,7 @@ handlers getErrors getTypes =
           _ -> pure ()
     ]
 
-runLSP :: (String -> IO [LSP.Diagnostic]) -> (String -> IO (Map.Map Int String)) -> IO Int
+runLSP :: (String -> IO [LSP.Diagnostic]) -> (String -> IO (Map.Map Int T.Text)) -> IO Int
 runLSP getErrors getTypes =
   runServer $
     ServerDefinition
