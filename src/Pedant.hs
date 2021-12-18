@@ -136,7 +136,7 @@ pedantMain = do
               let diag = pedantError err name contents
               putStrLn (ppePrint diag)
         Left b -> putStrLn (ppePrint (NonEmpty.head b))
-    _ -> putStrLn "pedant [file]"
+    _ -> putStrLn "pedant compile [file]"
   where
     envLookup :: String -> TypeEnv -> Maybe Scheme
     envLookup key (TypeEnv d) = Map.lookup key d
