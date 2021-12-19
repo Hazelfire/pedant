@@ -16,10 +16,12 @@ To run this project, you will need cabal and ghc. Simply run:
 
 ```
 stack build
-stack run
+stack run pedant compile filename ## e.g., stack run pedant examples/simple_example.ped
 ```
 
 You can also use nix. A shell.nix is provided with the project.
+
+For Ubuntu, you can also use `make-ubuntu.bash` file as a convenience wrapper.
 
 # Basic syntax
 The syntax of pedant is really simple to learn. It's simply a collection of
@@ -71,6 +73,8 @@ C style line and block comments are also available:
   This is a block comment
 */
 ```
+
+As of now, .ped files must end with a newline, POSIX-style.
 
 # Dimensional Analysis in Pedant
 A dimensional checker runs over pedant to ensure that there are no dimensional
@@ -206,7 +210,6 @@ multUsd x = x * 2 usd
 is of type `'a -> 'a usd`. Types like `'a 'b 'c` etc are polymorphic types, meaning
 that they could be anything that the user wants to put in them. This says that
 the functions adds the usd dimension to whatever dimension `'a` ends up being.
-
 
 ## Extension of Dimensional Analysis
 For my purposes, this actually wasn't a good enough definition of
