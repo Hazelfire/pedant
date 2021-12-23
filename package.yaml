@@ -10,9 +10,18 @@ extra-source-files:
 
 ghc-options: -Wall
 
+
+custom-setup:
+  dependencies:
+    - base >= 4.9 && < 5
+    - cabal-doctest >= 1 && <1.1
+
 dependencies:
   - base >= 4.9 && < 5
   - lsp
+  - filepath
+  - lsp-types
+  - lens
   - parser-combinators
   - megaparsec
   - ordered-containers
@@ -21,6 +30,9 @@ dependencies:
   - containers
   - text
   - hslogger
+
+data-files:
+  - "**/*.ped"
 
 library:
   source-dirs: src
@@ -32,3 +44,19 @@ executable:
   source-dirs: app
   dependencies:
     - pedant
+
+tests:
+  tests:
+    main: Spec.hs
+    source-dirs: 
+      - test
+      - src
+    dependencies:
+      - hspec
+  doctests:
+    main: Doctest.hs
+    source-dirs: 
+      - doctest
+      - src
+    dependencies:
+      - doctest

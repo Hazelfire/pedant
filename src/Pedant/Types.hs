@@ -3,6 +3,7 @@
 module Pedant.Types
   ( Dimension (..),
     PrimitiveDim (..),
+    VariableName (..),
     Scheme (..),
     Type (..),
     baseUnitsDim,
@@ -10,6 +11,7 @@ module Pedant.Types
     baseDimension,
     baseUnits,
     ExecutionExpression (..),
+    ExecutionStatement (..),
     PedantParseError (..),
     ExecutionValue (..),
     NumericValue (..),
@@ -18,6 +20,7 @@ module Pedant.Types
     PrettyPrint (..),
     Substitution (..),
     Types (..),
+    InternalFunction (..),
   )
 where
 
@@ -40,6 +43,7 @@ data NumericValue
     ListValue [NumericValue]
   | DictValue (Map.Map T.Text NumericValue)
   | FuncValue T.Text ExecutionExpression
+  | InternalFunctionValue InternalFunction
 
 lift2Numeric :: (Double -> Double -> Double) -> NumericValue -> NumericValue -> NumericValue
 lift2Numeric op a b =
@@ -57,6 +61,7 @@ liftNumeric op a =
     ListValue list -> ListValue (map (liftNumeric op) list)
     DictValue x -> DictValue x
     FuncValue x y -> FuncValue x y
+    InternalFunctionValue x -> InternalFunctionValue x
 
 instance Num NumericValue where
   (*) = lift2Numeric (*)
@@ -189,6 +194,7 @@ instance Show NumericValue where
   show (ListValue val) = "[" ++ List.intercalate ", " (map show val) ++ "]"
   show (DictValue val) = "{" ++ List.intercalate ", " (map (\(key, value) -> T.unpack key ++ "=" ++ show value) (Map.toAscList val)) ++ "}"
   show (FuncValue arg expr) = T.unpack arg ++ " -> " ++ show expr
+  show (InternalFunctionValue _) = "INTERNAL FUNCTION"
 
 data ExecutionValue
   = ExecutionValueNumber Double
@@ -199,10 +205,27 @@ data ExecutionValue
 
 data ExecutionExpression
   = EBinOp T.Text ExecutionExpression ExecutionExpression
-  | EVariable T.Text
+  | EVariable VariableName
   | EAccess ExecutionExpression T.Text
   | EConstant ExecutionValue
   | ENegate ExecutionExpression
+  | EInternalFunc InternalFunction
+  deriving (Show)
+
+newtype InternalFunction = InternalFunction (NumericValue -> NumericValue)
+
+instance Show InternalFunction where
+  show _ = "INTERNAL FUNCTION"
+
+data VariableName = VariableName
+  { varNameModule :: T.Text,
+    varNameName :: T.Text
+  }
+  deriving (Show, Eq, Ord)
+
+data ExecutionStatement
+  = ExecAssignment T.Text ExecutionExpression
+  | ExecImport T.Text (Set.Set T.Text)
   deriving (Show)
 
 data Operation = Add | Sub | Mult | Div | App | Power
@@ -216,6 +239,7 @@ data PedantParseError = PedantParseError
     ppeEndRow :: Int,
     ppePrint :: T.Text
   }
+  deriving (Show)
 
 data Scheme = Scheme [T.Text] Type
 

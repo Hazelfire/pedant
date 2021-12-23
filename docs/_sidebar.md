@@ -1,0 +1,7 @@
+* [Home](/)
+* [Installation](installation.md)
+* [Contributing](contributing.md)
+* [Syntax](syntax.md)
+* [Theory](theory.md)
+* [Roadmap](roadmap.md)
+* [Operations](operations.md)

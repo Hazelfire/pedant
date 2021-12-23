@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE TypeFamilies #-}
 
 -- | The parser for pedant. Creates a syntax tree from the file
 module Pedant.Parser
@@ -14,15 +15,17 @@ module Pedant.Parser
     ParseExpression (..),
     Assignment (..),
     Statement (..),
+    makeErrorBundle,
   )
 where
 
 import Control.Monad.Combinators.Expr
 import qualified Data.Bifunctor as Bifunctor
 import qualified Data.List as List
-import Data.List.NonEmpty (NonEmpty)
+import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.Map as Map
 import Data.Maybe (catMaybes)
+import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Void (Void)
@@ -32,7 +35,7 @@ import Text.Megaparsec
 import Text.Megaparsec.Char
 import qualified Text.Megaparsec.Char.Lexer as L
 
--- | We now define a parser for this typed language
+-- | c We now define a parser for this typed language
 data Assignment = Assignment
   { assignmentName :: T.Text,
     assignmentArguments :: [T.Text],
@@ -42,8 +45,9 @@ data Assignment = Assignment
 
 data Statement
   = AssignmentStatement Assignment
-  | UnitStatement [T.Text]
-  | ImportStatement T.Text [T.Text]
+  | UnitStatement [Positioned T.Text]
+  | ImportStatement (Positioned T.Text) [Positioned T.Text]
+  deriving (Show)
 
 data PositionData = PositionData Int Int
   deriving (Show, Eq, Ord)
@@ -229,21 +233,30 @@ pStatement :: Parser Statement
 pStatement = L.lineFold scn $ \sc' ->
   let new_space_consumer = try sc' <|> sc
    in choice
-        [ pUnit new_space_consumer,
-          AssignmentStatement <$> pAssignment new_space_consumer,
-          pImport new_space_consumer
+        [ pImport new_space_consumer,
+          pUnit new_space_consumer,
+          AssignmentStatement <$> pAssignment new_space_consumer
         ]
 
+-- | Import statements. They come in the form of:
+-- import [module]([name1, name2, ...])
+-- >>> :set -XOverloadedStrings
+-- >>> parse (pImport sc) "" "import moduleName(name1, name2)\n"
+-- Right (ImportStatement (Positioned (PositionData 7 10) "moduleName") [Positioned (PositionData 18 5) "name1",Positioned (PositionData 25 5) "name2"])
+--
+-- Empty imports are invalid:
+-- >>> parse (pImport sc) "" "import moduleName()\n"
+-- Left (ParseErrorBundle {bundleErrors = TrivialError 18 (Just (Tokens (')' :| ""))) (fromList [Label ('n' :| "ame")]) :| [], bundlePosState = PosState {pstateInput = "import moduleName()\n", pstateOffset = 0, pstateSourcePos = SourcePos {sourceName = "", sourceLine = Pos 1, sourceColumn = Pos 1}, pstateTabWidth = Pos 8, pstateLinePrefix = ""}})
 pImport :: Parser () -> Parser Statement
 pImport sc' = do
-  _ <- L.lexeme sc' (symbol "import")
-  fileName <- L.lexeme sc' pName
+  _ <- try (L.lexeme sc' (symbol "import"))
+  fileName <- position $ L.lexeme sc' pName
   _ <- L.lexeme sc' (symbol "(")
   ImportStatement fileName <$> pImportList
   where
-    pImportList :: Parser [T.Text]
+    pImportList :: Parser [Positioned T.Text]
     pImportList = do
-      importName <- L.lexeme sc' pName
+      importName <- position $ L.lexeme sc' pName
       choice
         [ do
             _ <- L.lexeme sc' (symbol ",")
@@ -256,7 +269,7 @@ pImport sc' = do
 pUnit :: Parser () -> Parser Statement
 pUnit sc' = do
   _ <- L.lexeme sc' (symbol "unit")
-  UnitStatement <$> (pName `sepBy1` sc')
+  UnitStatement <$> (position pName `sepBy1` sc')
 
 pAssignment :: Parser () -> Parser Assignment
 pAssignment sc' = do
@@ -319,15 +332,38 @@ errorBundleToPedantError bundle =
    in fmap
         ( \err ->
             PedantParseError
-              (parseErrorTextPretty err)
+              (T.pack $ parseErrorTextPretty err)
               (unPos column - 1)
               (unPos row - 1)
               (unPos row - 1)
               (unPos column)
-              (errorBundlePretty bundle)
+              (T.pack $ errorBundlePretty bundle)
         )
         (bundleErrors bundle)
 
 parseProgram :: String -> T.Text -> Either (NonEmpty PedantParseError) [Statement]
 parseProgram name contents = do
   Bifunctor.first errorBundleToPedantError $ parse program name contents
+
+-- | Makes a bundle of errors based on a file name contents and positions.
+makeErrorBundle :: (ShowErrorComponent a, a ~ Positioned b) => a -> String -> T.Text -> PedantParseError
+makeErrorBundle err@(Positioned (PositionData offset l) _) filename contents =
+  let initialPosState =
+        PosState
+          { pstateInput = contents,
+            pstateOffset = 0,
+            pstateSourcePos = initialPos filename,
+            pstateTabWidth = defaultTabWidth,
+            pstateLinePrefix = ""
+          }
+      ([(_, sourcePos), (_, endSourcePos)], _) = attachSourcePos id [offset, offset + l] initialPosState
+      newPosState = initialPosState {pstateInput = contents, pstateOffset = 0}
+      errorBundle = ParseErrorBundle (FancyError offset (Set.singleton (ErrorCustom err)) :| []) newPosState
+   in PedantParseError
+        { ppeErrString = T.pack $ showErrorComponent err,
+          ppeColumn = unPos (sourceColumn sourcePos) - 1,
+          ppeRow = unPos (sourceLine sourcePos) - 1,
+          ppeEndColumn = unPos (sourceColumn endSourcePos) - 1,
+          ppeEndRow = unPos (sourceLine endSourcePos) - 1,
+          ppePrint = T.pack $ errorBundlePretty errorBundle
+        }

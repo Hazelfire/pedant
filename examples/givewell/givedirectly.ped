@@ -1,8 +1,9 @@
 // GiveDirectly's cost effectiveness Analysis. Taken from GiveWell
 
+import common(discount_rate, pv, years)
 // units
 unit usd usddonated usdtransfered usdinvested usdtransfered usdconsumed usdreturned
-unit people years value households
+unit people value households
 unit discountedpv
 
 // Donation size is arbitrary
@@ -40,11 +41,7 @@ immediate_increase_of_consumption =
   duration_of_initial_consumption
 future_increase_in_ln_consumption =  
   log_consumption_created baseline_consumption_per_capita annual_increase_consumption_by_roi
-discount_rate = 1.04 ^years-1
 duration_of_investment = 10 years
-test x y = x ^ y + 1
-pv payment discount duration = 
-  payment * (1 -  discount ^ (-duration)) / ln discount
 pv_of_investment = pv future_increase_in_ln_consumption discount_rate (duration_of_investment - (1 years))
 percent_of_investment_returned = 0.2 usdreturned usdinvested-1
 duration_of_end_of_benefits = 1 years

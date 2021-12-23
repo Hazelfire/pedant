@@ -8,28 +8,32 @@ module Pedant.TypeCheck
     TypeError (..),
     emptyTypeCheckState,
     TypeCheckState (..),
+    VariableName (..),
   )
 where
 
 import Control.Monad.Except
 import Control.Monad.State hiding (state)
+import qualified Data.Bifunctor
 import qualified Data.Map as Map
 import qualified Data.Map.Ordered as OMap
 import qualified Data.Maybe as Maybe
 import qualified Data.Set as Set
 import qualified Data.Text as T
 import Debug.Trace (trace, traceShowId)
+import qualified Pedant.FileResolver as Resolver
 import qualified Pedant.InBuilt as InBuilt
 import Pedant.Parser
 import Pedant.Types
 import qualified Text.Megaparsec as Megaparsec
 
--- | A Type Error. Contains the position where error was found and what
---   the problem is
+-- | A Type Error. Decribes a problem that occured during type checking
 data TypeError
   = UnificationError ReasonForUnification UnificationTrace
   | MissingUnitError T.Text
   | MissingVariableError T.Text
+  | MissingImportError T.Text T.Text
+  | MissingModuleError T.Text
   | InternalError T.Text
   deriving (Eq)
 
@@ -119,17 +123,38 @@ instance Megaparsec.ShowErrorComponent (Positioned TypeError) where
   showErrorComponent (Positioned _ (InternalError err)) =
     "INTERNAL ERROR. YOU SHOULD NOT BE GETTING THIS: "
       ++ T.unpack err
+  showErrorComponent (Positioned _ (MissingImportError moduleName variable)) =
+    concat
+      [ "Could not find name ",
+        T.unpack variable,
+        " in module ",
+        T.unpack moduleName,
+        "."
+      ]
+  showErrorComponent (Positioned _ (MissingModuleError moduleName)) =
+    concat
+      [ "Could not find module ",
+        T.unpack moduleName,
+        "."
+      ]
+
   errorComponentLen (Positioned (PositionData _ l) _) = l
 
+-- | The state of the type checker
 data TypeCheckState = TypeCheckState
-  { tcsEnv :: TypeEnv,
+  { -- | The environment of the checker. This contains references to all the variables and schemes of those variables currently declared.
+    tcsEnv :: TypeEnv,
+    -- | Substitutions, the current substitutions that are required for the expression to unify
     tcsSubs :: Substitution,
-    tcsUnits :: Set.Set T.Text,
-    tcsExecutionExpressions :: OMap.OMap T.Text ExecutionExpression
+    -- | Units, the units currently declared
+    tcsUnits :: Set.Set VariableName,
+    -- | A list of the modules that have been checked
+    tcsCheckedModules :: Set.Set T.Text,
+    tcsCurrentModule :: T.Text
   }
 
 emptyTypeCheckState :: TypeCheckState
-emptyTypeCheckState = TypeCheckState (TypeEnv Map.empty) nullSubst Set.empty OMap.empty
+emptyTypeCheckState = TypeCheckState (TypeEnv OMap.empty) nullSubst Set.empty Set.empty ""
 
 nullSubst :: Substitution
 nullSubst = Substitution Map.empty Map.empty
@@ -150,15 +175,15 @@ composeSubst s1 s2 = appliedSubs `subUnion` s1
           subDimensions = Map.map (apply s1) (subDimensions s2)
         }
 
-newtype TypeEnv = TypeEnv (Map.Map T.Text Scheme)
+newtype TypeEnv = TypeEnv (OMap.OMap VariableName (Scheme, ExecutionExpression))
   deriving (Show)
 
-remove :: T.Text -> TypeEnv -> TypeEnv
-remove var (TypeEnv env) = TypeEnv (Map.delete var env)
+addToEnv :: VariableName -> (Scheme, ExecutionExpression) -> TypeEnv -> TypeEnv
+addToEnv key var (TypeEnv env) = TypeEnv ((key, var) OMap.|< env)
 
 instance Types TypeEnv where
-  ftv (TypeEnv env) = ftv (Map.elems env)
-  apply s (TypeEnv env) = TypeEnv (Map.map (apply s) env)
+  ftv (TypeEnv env) = ftv (map (fst . snd) $ OMap.assocs env)
+  apply s (TypeEnv env) = TypeEnv (fmap (Data.Bifunctor.first (apply s)) env)
 
 instance Types TypeCheckState where
   ftv state = ftv (tcsEnv state)
@@ -318,47 +343,90 @@ varBind u t
       [(PolyType u, t)]
   | otherwise = return (nullSubst {subTypes = Map.singleton u t})
 
-typeCheck :: TypeCheckState -> [Statement] -> (Maybe (Positioned TypeError), TypeCheckState)
-typeCheck tcState statements =
-  let (result, _) = runTI (inferLoop tcState statements)
+typeCheck :: TypeCheckState -> [Resolver.Module] -> (Maybe (Positioned TypeError), TypeCheckState)
+typeCheck tcState (currentModule : rest) =
+  trace ("Current module: " <> T.unpack (Resolver.moduleName currentModule)) $
+    case typeCheckFile tcState currentModule of
+      (Just err, newState) -> (Just err, newState)
+      (Nothing, newState) -> do
+        typeCheck newState rest
+typeCheck tcState [] =
+  (Nothing, tcState)
+
+typeCheckFile :: TypeCheckState -> Resolver.Module -> (Maybe (Positioned TypeError), TypeCheckState)
+typeCheckFile tcState m =
+  let setStateModuleName = tcState {tcsCurrentModule = Resolver.moduleName m}
+      (result, _) = runTI (inferLoop setStateModuleName (Resolver.moduleStatements m))
    in case result of
-        Right x -> x
-        Left err -> (Just err, tcState)
+        Right (err, state) ->
+          let addedCheckedModule = state {tcsCheckedModules = Resolver.moduleName m `Set.insert` tcsCheckedModules setStateModuleName}
+           in (err, addedCheckedModule)
+        Left err ->
+          (Just err, tcState)
   where
     inferLoop :: TypeCheckState -> [Statement] -> TI (Maybe (Positioned TypeError), TypeCheckState)
     inferLoop state [] = return (Nothing, state)
     inferLoop state (statement : rest) =
-      case statement of
-        UnitStatement units ->
-          let newUnits = tcsUnits state `Set.union` Set.fromList units
-           in inferLoop (state {tcsUnits = newUnits}) rest
-        AssignmentStatement assignment -> do
-          mapPairs <-
-            mapM
-              ( \a -> do
-                  tv <- newTyVar a
-                  return (a, Scheme [] tv)
-              )
-              (assignmentArguments assignment)
-          let env = tcsEnv state
-              arguments = assignmentArguments assignment
-              TypeEnv env' = foldr remove env arguments
-              env'' = TypeEnv (env' `Map.union` Map.fromList mapPairs)
-          TypeCheckResult s1 t1 ex <- ti (state {tcsEnv = env''}) (assignmentExpression assignment)
+      let moduleName = tcsCurrentModule state
+       in case statement of
+            UnitStatement units ->
+              let newUnits = tcsUnits state `Set.union` Set.fromList (map (\(Positioned _ p) -> VariableName moduleName p) units)
+               in inferLoop (state {tcsUnits = newUnits}) rest
+            ImportStatement importedModuleName imports -> do
+              moduleState <- importModule moduleName importedModuleName imports state
+              inferLoop moduleState rest
+            AssignmentStatement assignment -> do
+              -- First, assign polymorphic types to all arguments of the function (make the definition as loose as possible)
+              mapPairs <-
+                mapM
+                  ( \a -> do
+                      tv <- newTyVar a
+                      return (VariableName moduleName a, (Scheme [] tv, EVariable (VariableName moduleName a))) -- This is a fake execution expression, it's an argument, it's deliberately unknown
+                  )
+                  (assignmentArguments assignment)
 
-          let varType = foldr (\(_, Scheme _ tv) acc -> apply s1 tv `FuncType` acc) (apply s1 t1) mapPairs
-              name = assignmentName assignment
-              TypeEnv envWithoutName = remove name env
-              t' = generalize (apply s1 env) varType
-              envWithVar = TypeEnv (Map.insert name t' envWithoutName)
-          let newTcState =
-                state
-                  { tcsEnv = envWithVar,
-                    tcsSubs = s1 `composeSubst` tcsSubs state,
-                    tcsExecutionExpressions = (name, wrapFunctionArgs arguments ex) OMap.|< tcsExecutionExpressions state
-                  }
-          inferLoop newTcState rest
-        `catchError` (\err -> return (Just err, state))
+              -- Then, add these arguments to the type environment
+              let (TypeEnv env) = tcsEnv state
+                  arguments = assignmentArguments assignment
+                  env'' = TypeEnv (env OMap.<>| OMap.fromList mapPairs)
+              TypeCheckResult s1 t1 ex <- ti (state {tcsEnv = env''}) (assignmentExpression assignment)
+
+              let varType = foldr (\(_, (Scheme _ tv, _)) acc -> apply s1 tv `FuncType` acc) (apply s1 t1) mapPairs
+                  name = VariableName moduleName (assignmentName assignment)
+                  t' = generalize (apply s1 env'') varType
+                  -- Note that this env is not env''. This is because otherwise we will add arguments as variables
+                  -- We want to not include those
+                  envWithVar = addToEnv name (t', wrapFunctionArgs arguments ex) (TypeEnv env)
+              let newTcState =
+                    state
+                      { tcsEnv = envWithVar,
+                        tcsSubs = s1 `composeSubst` tcsSubs state
+                      }
+              inferLoop newTcState rest
+            `catchError` (\err -> return (Just err, state))
+
+importModule :: T.Text -> Positioned T.Text -> [Positioned T.Text] -> TypeCheckState -> TI TypeCheckState
+importModule moduleName (Positioned moduleNamePos importedModuleName) imports oldState =
+  trace (T.unpack ("Module name: " <> moduleName <> ", Checked modules: " <> T.pack (show (tcsCheckedModules oldState)))) $
+    if importedModuleName `Set.member` tcsCheckedModules oldState
+      then do
+        let foldImports = foldM $ \currState (Positioned importNamePos importName) -> do
+              let (TypeEnv env) = tcsEnv currState
+              case OMap.lookup (VariableName importedModuleName importName) env of
+                Just (varType, _) ->
+                  -- The item imported is a variable. I simply write this down
+                  -- as a variable declaration
+                  let newTcState = addToEnv (VariableName moduleName importName) (varType, EVariable (VariableName importedModuleName importName)) (tcsEnv currState)
+                   in return (currState {tcsEnv = newTcState})
+                Nothing ->
+                  -- Is it an imported unit?
+                  if VariableName importedModuleName importName `Set.member` tcsUnits oldState
+                    then
+                      let newUnits = VariableName moduleName importName `Set.insert` tcsUnits currState
+                       in return (currState {tcsUnits = newUnits})
+                    else throwError $ Positioned importNamePos (MissingImportError importedModuleName importName)
+        foldImports oldState imports
+      else throwError $ Positioned moduleNamePos (MissingModuleError importedModuleName)
 
 wrapFunctionArgs :: [T.Text] -> ExecutionExpression -> ExecutionExpression
 wrapFunctionArgs (arg : rest) expr = EConstant (ExecutionValueFunc arg (wrapFunctionArgs rest expr))
@@ -372,22 +440,22 @@ foldSubst = foldr composeSubst nullSubst
 ti :: TypeCheckState -> Positioned ParseExpression -> TI TypeCheckResult
 ti state (Positioned pos expression) =
   let (TypeEnv env) = tcsEnv state
-      allowedUnits = tcsUnits state
+      allowedUnits = Set.filter (\(VariableName moduleName _) -> moduleName == tcsCurrentModule state) $ tcsUnits state
    in case expression of
         PVariable n ->
-          case Map.lookup n env of
+          case OMap.lookup (VariableName (tcsCurrentModule state) n) env of
             Nothing ->
               case filter ((== n) . InBuilt.funcName) InBuilt.inBuiltFunctions of
                 func : _ -> do
                   t <- instantiate (InBuilt.funcType func)
-                  return $ TypeCheckResult nullSubst t (EVariable n)
+                  return $ TypeCheckResult nullSubst t (EInternalFunc $ InBuilt.funcDef func)
                 [] ->
                   throwError $ Positioned pos $ MissingVariableError n
-            Just sigma -> do
+            Just (sigma, _) -> do
               t <- instantiate sigma
-              return $ TypeCheckResult nullSubst t (EVariable n)
+              return $ TypeCheckResult nullSubst t (EVariable (VariableName (tcsCurrentModule state) n))
         PConstant (ParseNumber value pdim) -> do
-          dimension <- evaluateDimension allowedUnits pdim
+          dimension <- evaluateDimension (Set.map (\(VariableName _ name) -> name) allowedUnits) pdim
           return $ TypeCheckResult nullSubst (BaseDim dimension) (EConstant $ ExecutionValueNumber value)
         PConstant ParseEmptyList -> do
           let emptyListType = Scheme ["a", "t"] $ ListType (BaseDim (NormDim (Map.singleton (PolyDim "a") 1)))

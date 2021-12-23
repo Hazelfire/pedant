@@ -1,0 +1,15 @@
+one = 1
+
+addOne x = x + 1
+
+
+two = addOne one
+
+// Testing adding variables with the same name as arguments
+x = 5
+addTwo x = x + 2
+seven = addTwo x
+
+// Functions with multiple arguments
+add x y = x + 1
+eight = add 5 3
