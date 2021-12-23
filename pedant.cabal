@@ -1,4 +1,4 @@
-cabal-version: 1.12
+cabal-version: 1.24
 
 -- This file has been generated from package.yaml by hpack version 0.34.4.
 --
@@ -12,22 +12,41 @@ category:           Economics
 homepage:           https://github.com/Hazelfire/pedant#readme
 bug-reports:        https://github.com/Hazelfire/pedant/issues
 maintainer:         Sam Nolan <samnolan555@gmail.com>
-build-type:         Simple
+build-type:         Custom
 extra-source-files:
       CHANGELOG.md
+data-files:
+      error.ped
+      examples/functions.ped
+      examples/givewell/amf.ped
+      examples/givewell/common.ped
+      examples/givewell/deworm_the_world.ped
+      examples/givewell/givedirectly.ped
+      examples/givewell/newgivedirectly.ped
+      examples/simple_example.ped
+      examples/tests.ped
+      examples/tests/functions.ped
+      examples/tests/simpleimport.ped
 
 source-repository head
     type: git
     location: https://github.com/Hazelfire/pedant
 
+custom-setup
+    setup-depends:
+          base >=4.9 && <5
+        , cabal-doctest >=1 && <1.1
+
 library
     exposed-modules:
           Pedant
     other-modules:
-          LSP
-          Parser
-          TypeCheck
-          Types
+          Pedant.FileResolver
+          Pedant.InBuilt
+          Pedant.LSP
+          Pedant.Parser
+          Pedant.TypeCheck
+          Pedant.Types
           Paths_pedant
     hs-source-dirs:
           src
@@ -35,9 +54,11 @@ library
     build-depends:
           base >=4.9 && <5
         , containers
+        , filepath
         , hslogger
         , lens
         , lsp
+        , lsp-types
         , megaparsec
         , mtl
         , ordered-containers
@@ -52,9 +73,11 @@ executable pedant
     build-depends:
           base >=4.9 && <5
         , containers
+        , filepath
         , hslogger
         , lens
         , lsp
+        , lsp-types
         , megaparsec
         , mtl
         , ordered-containers
@@ -64,4 +87,68 @@ executable pedant
     hs-source-dirs:
           app
     ghc-options: -Wall
+    default-language: Haskell2010
+
+test-suite doctests
+    type: exitcode-stdio-1.0
+    main-is: Doctest.hs
+    other-modules:
+          Pedant
+          Pedant.FileResolver
+          Pedant.InBuilt
+          Pedant.LSP
+          Pedant.Parser
+          Pedant.TypeCheck
+          Pedant.Types
+          Paths_pedant
+    hs-source-dirs:
+          doctest
+          src
+    ghc-options: -Wall
+    build-depends:
+          base >=4.9 && <5
+        , containers
+        , doctest
+        , filepath
+        , hslogger
+        , lens
+        , lsp
+        , lsp-types
+        , megaparsec
+        , mtl
+        , ordered-containers
+        , parser-combinators
+        , text
+    default-language: Haskell2010
+
+test-suite tests
+    type: exitcode-stdio-1.0
+    main-is: Spec.hs
+    other-modules:
+          Pedant
+          Pedant.FileResolver
+          Pedant.InBuilt
+          Pedant.LSP
+          Pedant.Parser
+          Pedant.TypeCheck
+          Pedant.Types
+          Paths_pedant
+    hs-source-dirs:
+          test
+          src
+    ghc-options: -Wall
+    build-depends:
+          base >=4.9 && <5
+        , containers
+        , filepath
+        , hslogger
+        , hspec
+        , lens
+        , lsp
+        , lsp-types
+        , megaparsec
+        , mtl
+        , ordered-containers
+        , parser-combinators
+        , text
     default-language: Haskell2010

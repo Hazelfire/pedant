@@ -1,13 +1,4 @@
 unit usd
+import functions(addOne, addOneUsd)
 // This is a collection of tests for mainly functions
 id x = x
-addOne x = x + 1
-addOneUsd x = x + 1 usd
-testVar = 1000
-testId = id testVar
-testAddOne = addOne testVar
-
-dict = { x = 1, y = 2 }
-val = dict.x
-getX d = d.x
-val2 = getX dict
