@@ -1,0 +1,15 @@
+// run with: 
+// $ stack run pedant compile examples/highschool_physics_example.ped
+unit verticalMeters seconds kilograms jules newtons
+mass = 10 kilograms
+initial_height = 10 verticalMeters
+speed_upwards = 5 verticalMeters / (1 seconds)
+duration_of_movement = 10 seconds
+gravity_constant = 9.8 verticalMeters / (1 seconds2)
+upwards_movement  = speed_upwards * duration_of_movement
+final_vertical_height  = initial_height + upwards_movement
+joule_conversion = 1 jules / (1 kilograms * 1 verticalMeters2 * 1 seconds-2)
+newton_conversion = 1 newtons / (1 kilograms * 1 verticalMeters * 1 seconds-2)
+difference_in_potential_energy = final_vertical_height * mass * gravity_constant
+difference_in_potential_energy_newtons = difference_in_potential_energy * newton_conversion
+difference_in_potential_energy_jules  = difference_in_potential_energy * joule_conversion
