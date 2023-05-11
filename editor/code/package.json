@@ -1,0 +1,54 @@
+{
+    "name": "pedant-syntax-highlighting",
+    "displayName": "Pedant Syntax Highlighting",
+    "description": "Syntax highlighting for Pedant files",
+    "version": "0.0.1",
+    "categories": [
+        "Programming Languages"
+    ],
+    "engines": {
+		"vscode": "^1.75.0"
+	},
+    "activationEvents": [
+		"onLanguage:pedant"
+	],
+    "contributes": {
+        "languages": [
+            {
+                "id": "pedant",
+                "aliases": [
+                    "Pedant",
+                    "pedant"
+                ],
+                "extensions": [
+                    ".ped"
+                ],
+                "configuration": "./language-configuration.json"
+            }
+        ],
+        "grammars": [
+            {
+                "language": "pedant",
+                "scopeName": "source.pedant",
+                "path": "./syntaxes/pedant.tmLanguage.json"
+            }
+        ],
+        "configuration": {
+            "type": "object",
+            "title": "Example configuration",
+            "properties": {}
+        }
+    },
+    "main": "./client/out/extension",
+    "scripts": {
+        "compile": "tsc -b",
+        "watch": "tsc -watch",
+        "postinstall": "npm run compile"
+    },
+    "devDependencies": {
+        "@types/node": "^20.1.1",
+        "typescript": "^5.0.4",
+        "vsce": "^2.15.0",
+        "vscode": "^1.1.37"
+    }
+}

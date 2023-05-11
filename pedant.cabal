@@ -1,6 +1,6 @@
-cabal-version: 1.24
+cabal-version: 1.12
 
--- This file has been generated from package.yaml by hpack version 0.34.4.
+-- This file has been generated from package.yaml by hpack version 0.35.2.
 --
 -- see: https://github.com/sol/hpack
 
@@ -12,17 +12,17 @@ category:           Economics
 homepage:           https://github.com/Hazelfire/pedant#readme
 bug-reports:        https://github.com/Hazelfire/pedant/issues
 maintainer:         Sam Nolan <samnolan555@gmail.com>
-build-type:         Custom
+build-type:         Simple
 extra-source-files:
       CHANGELOG.md
 data-files:
-      error.ped
       examples/functions.ped
       examples/givewell/amf.ped
       examples/givewell/common.ped
       examples/givewell/deworm_the_world.ped
       examples/givewell/givedirectly.ped
       examples/givewell/newgivedirectly.ped
+      examples/highschool_physics_example.ped
       examples/simple_example.ped
       examples/tests.ped
       examples/tests/functions.ped
@@ -31,11 +31,6 @@ data-files:
 source-repository head
     type: git
     location: https://github.com/Hazelfire/pedant
-
-custom-setup
-    setup-depends:
-          base >=4.9 && <5
-        , cabal-doctest >=1 && <1.1
 
 library
     exposed-modules:

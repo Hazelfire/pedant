@@ -9,12 +9,12 @@ module Pedant.TypeCheck
     emptyTypeCheckState,
     TypeCheckState (..),
     VariableName (..),
+    VariableInfo(..)
   )
 where
 
 import Control.Monad.Except
 import Control.Monad.State hiding (state)
-import qualified Data.Bifunctor
 import qualified Data.Map as Map
 import qualified Data.Map.Ordered as OMap
 import qualified Data.Maybe as Maybe
@@ -23,7 +23,7 @@ import qualified Data.Text as T
 import Debug.Trace (trace, traceShowId)
 import qualified Pedant.FileResolver as Resolver
 import qualified Pedant.InBuilt as InBuilt
-import Pedant.Parser
+import qualified Pedant.Parser as Parser
 import Pedant.Types
 import qualified Text.Megaparsec as Megaparsec
 
@@ -38,18 +38,18 @@ data TypeError
   deriving (Eq)
 
 data ReasonForUnification
-  = BinaryOpUnificationReason T.Text (Positioned ParseExpression, Type) (Positioned ParseExpression, Type)
-  | PrefixOpUnificationReason T.Text (Positioned ParseExpression, Type)
-  | AccessUnificationReason (Positioned ParseExpression, Type) T.Text
+  = BinaryOpUnificationReason T.Text (Parser.Positioned Parser.ParseExpression, Type) (Parser.Positioned Parser.ParseExpression, Type)
+  | PrefixOpUnificationReason T.Text (Parser.Positioned Parser.ParseExpression, Type)
+  | AccessUnificationReason (Parser.Positioned Parser.ParseExpression, Type) T.Text
   deriving (Eq)
 
-instance Ord (Positioned TypeError) where
-  compare (Positioned (PositionData a _) _) (Positioned (PositionData b _) _) = compare a b
+instance Ord (Parser.Positioned TypeError) where
+  compare (Parser.Positioned (Parser.PositionData a _) _) (Parser.Positioned (Parser.PositionData b _) _) = compare a b
 
 type UnificationTrace = [(Type, Type)]
 
-instance Megaparsec.ShowErrorComponent (Positioned TypeError) where
-  showErrorComponent (Positioned _ (UnificationError reason _)) =
+instance Megaparsec.ShowErrorComponent (Parser.Positioned TypeError) where
+  showErrorComponent (Parser.Positioned _ (UnificationError reason _)) =
     case reason of
       BinaryOpUnificationReason "+" (p1, t1) (p2, t2) ->
         T.unpack $
@@ -106,7 +106,7 @@ instance Megaparsec.ShowErrorComponent (Positioned TypeError) where
               " does not have the key ",
               key
             ]
-  showErrorComponent (Positioned _ (MissingUnitError unitName)) =
+  showErrorComponent (Parser.Positioned _ (MissingUnitError unitName)) =
     concat
       [ "unit ",
         T.unpack unitName,
@@ -114,16 +114,16 @@ instance Megaparsec.ShowErrorComponent (Positioned TypeError) where
         T.unpack unitName,
         "\" statement before this line"
       ]
-  showErrorComponent (Positioned _ (MissingVariableError varName)) =
+  showErrorComponent (Parser.Positioned _ (MissingVariableError varName)) =
     concat
       [ "variable ",
         T.unpack varName,
         " not declared."
       ]
-  showErrorComponent (Positioned _ (InternalError err)) =
+  showErrorComponent (Parser.Positioned _ (InternalError err)) =
     "INTERNAL ERROR. YOU SHOULD NOT BE GETTING THIS: "
       ++ T.unpack err
-  showErrorComponent (Positioned _ (MissingImportError moduleName variable)) =
+  showErrorComponent (Parser.Positioned _ (MissingImportError moduleName variable)) =
     concat
       [ "Could not find name ",
         T.unpack variable,
@@ -131,14 +131,14 @@ instance Megaparsec.ShowErrorComponent (Positioned TypeError) where
         T.unpack moduleName,
         "."
       ]
-  showErrorComponent (Positioned _ (MissingModuleError moduleName)) =
+  showErrorComponent (Parser.Positioned _ (MissingModuleError moduleName)) =
     concat
       [ "Could not find module ",
         T.unpack moduleName,
         "."
       ]
 
-  errorComponentLen (Positioned (PositionData _ l) _) = l
+  errorComponentLen (Parser.Positioned (Parser.PositionData _ l) _) = l
 
 -- | The state of the type checker
 data TypeCheckState = TypeCheckState
@@ -175,15 +175,21 @@ composeSubst s1 s2 = appliedSubs `subUnion` s1
           subDimensions = Map.map (apply s1) (subDimensions s2)
         }
 
-newtype TypeEnv = TypeEnv (OMap.OMap VariableName (Scheme, ExecutionExpression))
+data VariableInfo = VariableInfo {
+  variableInfoScheme :: Scheme,
+  variableInfoExecutionExpression :: ExecutionExpression,
+  variableInfoParserStatement :: Parser.Assignment
+} deriving (Show)
+
+newtype TypeEnv = TypeEnv { teVarMap :: OMap.OMap VariableName VariableInfo }
   deriving (Show)
 
-addToEnv :: VariableName -> (Scheme, ExecutionExpression) -> TypeEnv -> TypeEnv
+addToEnv :: VariableName -> VariableInfo -> TypeEnv -> TypeEnv
 addToEnv key var (TypeEnv env) = TypeEnv ((key, var) OMap.|< env)
 
 instance Types TypeEnv where
-  ftv (TypeEnv env) = ftv (map (fst . snd) $ OMap.assocs env)
-  apply s (TypeEnv env) = TypeEnv (fmap (Data.Bifunctor.first (apply s)) env)
+  ftv (TypeEnv env) = ftv (map (variableInfoScheme . snd) $ OMap.assocs env)
+  apply s (TypeEnv env) = TypeEnv (fmap (\vi -> vi { variableInfoScheme = apply s (variableInfoScheme vi) }) env)
 
 instance Types TypeCheckState where
   ftv state = ftv (tcsEnv state)
@@ -196,9 +202,9 @@ generalize env t = Scheme vars t
 
 newtype TIState = TIState {tiSupply :: Int}
 
-type TI a = ExceptT (Positioned TypeError) (State TIState) a
+type TI a = ExceptT (Parser.Positioned TypeError) (State TIState) a
 
-runTI :: TI a -> (Either (Positioned TypeError) a, TIState)
+runTI :: TI a -> (Either (Parser.Positioned TypeError) a, TIState)
 runTI t =
   runState (runExceptT t) initTIState
   where
@@ -232,14 +238,14 @@ instantiate (Scheme vars t) = do
 -- | Unification Monad
 type UM a = ExceptT UnificationTrace (State TIState) a
 
-liftUMtoTI :: PositionData -> ReasonForUnification -> UM a -> TI a
+liftUMtoTI :: Parser.PositionData -> ReasonForUnification -> UM a -> TI a
 liftUMtoTI p reason m = do
   initState <- get
   case runState (runExceptT m) initState of
     (Right result, state) -> do
       put state
       return result
-    (Left err, _) -> throwError $ Positioned p $ UnificationError reason err
+    (Left err, _) -> throwError $ Parser.Positioned p $ UnificationError reason err
 
 -- | Attempts to find a unification between dimensions
 mguDim :: Dimension -> Dimension -> UM Substitution
@@ -343,7 +349,7 @@ varBind u t
       [(PolyType u, t)]
   | otherwise = return (nullSubst {subTypes = Map.singleton u t})
 
-typeCheck :: TypeCheckState -> [Resolver.Module] -> (Maybe (Positioned TypeError), TypeCheckState)
+typeCheck :: TypeCheckState -> [Resolver.Module] -> (Maybe (Parser.Positioned TypeError), TypeCheckState)
 typeCheck tcState (currentModule : rest) =
   trace ("Current module: " <> T.unpack (Resolver.moduleName currentModule)) $
     case typeCheckFile tcState currentModule of
@@ -353,7 +359,7 @@ typeCheck tcState (currentModule : rest) =
 typeCheck tcState [] =
   (Nothing, tcState)
 
-typeCheckFile :: TypeCheckState -> Resolver.Module -> (Maybe (Positioned TypeError), TypeCheckState)
+typeCheckFile :: TypeCheckState -> Resolver.Module -> (Maybe (Parser.Positioned TypeError), TypeCheckState)
 typeCheckFile tcState m =
   let setStateModuleName = tcState {tcsCurrentModule = Resolver.moduleName m}
       (result, _) = runTI (inferLoop setStateModuleName (Resolver.moduleStatements m))
@@ -364,39 +370,39 @@ typeCheckFile tcState m =
         Left err ->
           (Just err, tcState)
   where
-    inferLoop :: TypeCheckState -> [Statement] -> TI (Maybe (Positioned TypeError), TypeCheckState)
+    inferLoop :: TypeCheckState -> [Parser.Statement] -> TI (Maybe (Parser.Positioned TypeError), TypeCheckState)
     inferLoop state [] = return (Nothing, state)
     inferLoop state (statement : rest) =
       let moduleName = tcsCurrentModule state
        in case statement of
-            UnitStatement units ->
-              let newUnits = tcsUnits state `Set.union` Set.fromList (map (\(Positioned _ p) -> VariableName moduleName p) units)
+            Parser.UnitStatement units ->
+              let newUnits = tcsUnits state `Set.union` Set.fromList (map (\(Parser.Positioned _ p) -> VariableName moduleName p) units)
                in inferLoop (state {tcsUnits = newUnits}) rest
-            ImportStatement importedModuleName imports -> do
+            Parser.ImportStatement importedModuleName imports -> do
               moduleState <- importModule moduleName importedModuleName imports state
               inferLoop moduleState rest
-            AssignmentStatement assignment -> do
+            Parser.AssignmentStatement assignment -> do
               -- First, assign polymorphic types to all arguments of the function (make the definition as loose as possible)
               mapPairs <-
                 mapM
                   ( \a -> do
                       tv <- newTyVar a
-                      return (VariableName moduleName a, (Scheme [] tv, EVariable (VariableName moduleName a))) -- This is a fake execution expression, it's an argument, it's deliberately unknown
+                      return (VariableName moduleName a, VariableInfo (Scheme [] tv) (EVariable (VariableName moduleName a)) assignment) -- This is a fake execution expression, it's an argument, it's deliberately unknown
                   )
-                  (assignmentArguments assignment)
+                  (Parser.assignmentArguments assignment)
 
               -- Then, add these arguments to the type environment
               let (TypeEnv env) = tcsEnv state
-                  arguments = assignmentArguments assignment
+                  arguments = Parser.assignmentArguments assignment
                   env'' = TypeEnv (env OMap.<>| OMap.fromList mapPairs)
-              TypeCheckResult s1 t1 ex <- ti (state {tcsEnv = env''}) (assignmentExpression assignment)
+              TypeCheckResult s1 t1 ex <- ti (state {tcsEnv = env''}) (Parser.assignmentExpression assignment)
 
-              let varType = foldr (\(_, (Scheme _ tv, _)) acc -> apply s1 tv `FuncType` acc) (apply s1 t1) mapPairs
-                  name = VariableName moduleName (assignmentName assignment)
+              let varType = foldr (\(_, VariableInfo (Scheme _ tv) _ _) acc -> apply s1 tv `FuncType` acc) (apply s1 t1) mapPairs
+                  name = VariableName moduleName (Parser.assignmentName assignment)
                   t' = generalize (apply s1 env'') varType
                   -- Note that this env is not env''. This is because otherwise we will add arguments as variables
                   -- We want to not include those
-                  envWithVar = addToEnv name (t', wrapFunctionArgs arguments ex) (TypeEnv env)
+                  envWithVar = addToEnv name (VariableInfo t' (wrapFunctionArgs arguments ex) assignment) (TypeEnv env)
               let newTcState =
                     state
                       { tcsEnv = envWithVar,
@@ -405,18 +411,17 @@ typeCheckFile tcState m =
               inferLoop newTcState rest
             `catchError` (\err -> return (Just err, state))
 
-importModule :: T.Text -> Positioned T.Text -> [Positioned T.Text] -> TypeCheckState -> TI TypeCheckState
-importModule moduleName (Positioned moduleNamePos importedModuleName) imports oldState =
-  trace (T.unpack ("Module name: " <> moduleName <> ", Checked modules: " <> T.pack (show (tcsCheckedModules oldState)))) $
+importModule :: T.Text -> Parser.Positioned T.Text -> [Parser.Positioned T.Text] -> TypeCheckState -> TI TypeCheckState
+importModule moduleName (Parser.Positioned moduleNamePos importedModuleName) imports oldState =
     if importedModuleName `Set.member` tcsCheckedModules oldState
       then do
-        let foldImports = foldM $ \currState (Positioned importNamePos importName) -> do
+        let foldImports = foldM $ \currState (Parser.Positioned importNamePos importName) -> do
               let (TypeEnv env) = tcsEnv currState
               case OMap.lookup (VariableName importedModuleName importName) env of
-                Just (varType, _) ->
+                Just vi ->
                   -- The item imported is a variable. I simply write this down
                   -- as a variable declaration
-                  let newTcState = addToEnv (VariableName moduleName importName) (varType, EVariable (VariableName importedModuleName importName)) (tcsEnv currState)
+                  let newTcState = addToEnv (VariableName moduleName importName) (vi { variableInfoExecutionExpression = EVariable (VariableName importedModuleName importName)}) (tcsEnv currState)
                    in return (currState {tcsEnv = newTcState})
                 Nothing ->
                   -- Is it an imported unit?
@@ -424,9 +429,9 @@ importModule moduleName (Positioned moduleNamePos importedModuleName) imports ol
                     then
                       let newUnits = VariableName moduleName importName `Set.insert` tcsUnits currState
                        in return (currState {tcsUnits = newUnits})
-                    else throwError $ Positioned importNamePos (MissingImportError importedModuleName importName)
+                    else throwError $ Parser.Positioned importNamePos (MissingImportError importedModuleName importName)
         foldImports oldState imports
-      else throwError $ Positioned moduleNamePos (MissingModuleError importedModuleName)
+      else throwError $ Parser.Positioned moduleNamePos (MissingModuleError importedModuleName)
 
 wrapFunctionArgs :: [T.Text] -> ExecutionExpression -> ExecutionExpression
 wrapFunctionArgs (arg : rest) expr = EConstant (ExecutionValueFunc arg (wrapFunctionArgs rest expr))
@@ -437,12 +442,12 @@ data TypeCheckResult = TypeCheckResult Substitution Type ExecutionExpression
 foldSubst :: Traversable t => t Substitution -> Substitution
 foldSubst = foldr composeSubst nullSubst
 
-ti :: TypeCheckState -> Positioned ParseExpression -> TI TypeCheckResult
-ti state (Positioned pos expression) =
+ti :: TypeCheckState -> Parser.Positioned Parser.ParseExpression -> TI TypeCheckResult
+ti state (Parser.Positioned pos expression) =
   let (TypeEnv env) = tcsEnv state
       allowedUnits = Set.filter (\(VariableName moduleName _) -> moduleName == tcsCurrentModule state) $ tcsUnits state
    in case expression of
-        PVariable n ->
+        Parser.PVariable n ->
           case OMap.lookup (VariableName (tcsCurrentModule state) n) env of
             Nothing ->
               case filter ((== n) . InBuilt.funcName) InBuilt.inBuiltFunctions of
@@ -450,18 +455,18 @@ ti state (Positioned pos expression) =
                   t <- instantiate (InBuilt.funcType func)
                   return $ TypeCheckResult nullSubst t (EInternalFunc $ InBuilt.funcDef func)
                 [] ->
-                  throwError $ Positioned pos $ MissingVariableError n
-            Just (sigma, _) -> do
-              t <- instantiate sigma
+                  throwError $ Parser.Positioned pos $ MissingVariableError n
+            Just vi -> do
+              t <- instantiate (variableInfoScheme vi)
               return $ TypeCheckResult nullSubst t (EVariable (VariableName (tcsCurrentModule state) n))
-        PConstant (ParseNumber value pdim) -> do
+        Parser.PConstant (Parser.ParseNumber value pdim) -> do
           dimension <- evaluateDimension (Set.map (\(VariableName _ name) -> name) allowedUnits) pdim
           return $ TypeCheckResult nullSubst (BaseDim dimension) (EConstant $ ExecutionValueNumber value)
-        PConstant ParseEmptyList -> do
+        Parser.PConstant Parser.ParseEmptyList -> do
           let emptyListType = Scheme ["a", "t"] $ ListType (BaseDim (NormDim (Map.singleton (PolyDim "a") 1)))
           dim <- instantiate emptyListType
           return $ TypeCheckResult nullSubst dim (EConstant ExecutionValueEmptyList)
-        PConstant (ParseRecord record) -> do
+        Parser.PConstant (Parser.ParseRecord record) -> do
           recordEntries <- forM (Map.toList record) $ \(key, el) -> do
             TypeCheckResult sub _type ex <- ti state el
             return (key, (sub, _type, ex))
@@ -470,7 +475,7 @@ ti state (Positioned pos expression) =
               elems = map (\(key, (_, _, value)) -> (key, value)) recordEntries
               substitutions = map (\(_, (sub, _, _)) -> sub) recordEntries
           return $ TypeCheckResult (foldSubst substitutions) (DictType (Map.fromList dimension)) (EConstant $ ExecutionValueDict (Map.fromList elems))
-        PBinOp "" e1 e2 ->
+        Parser.PBinOp "" e1 e2 ->
           do
             tv <- newTyVar "a"
             TypeCheckResult sub1 type1 ex1 <- ti state e1
@@ -478,10 +483,10 @@ ti state (Positioned pos expression) =
             let reason = BinaryOpUnificationReason "" (e1, type1) (e2, type2)
             sub3 <- liftUMtoTI pos reason $ mgu (apply sub2 type1) (FuncType type2 tv)
             return $ TypeCheckResult (sub3 `composeSubst` sub2 `composeSubst` sub1) (apply sub3 tv) (EBinOp "" ex1 ex2)
-        PBinOp opName e1 e2 ->
+        Parser.PBinOp opName e1 e2 ->
           do
             case filter ((== opName) . InBuilt.opName) InBuilt.inBuiltBinaryOperations of
-              [] -> throwError $ Positioned pos $ InternalError $ "ERROR, COULD NOT FIND OPERATION " <> opName
+              [] -> throwError $ Parser.Positioned pos $ InternalError $ "ERROR, COULD NOT FIND OPERATION " <> opName
               op : _ -> do
                 tv <- newTyVar "a"
                 opType <- instantiate (InBuilt.opType op)
@@ -490,16 +495,16 @@ ti state (Positioned pos expression) =
                 let reason = BinaryOpUnificationReason opName (e1, t1) (e2, t2)
                 s3 <- liftUMtoTI pos reason $ mgu opType (t1 `FuncType` (t2 `FuncType` tv))
                 return $ TypeCheckResult (s3 `composeSubst` s2 `composeSubst` s1) (apply s3 tv) (EBinOp opName ex1 ex2)
-        PAccess e1 x ->
+        Parser.PAccess e1 x ->
           do
             tv <- newTyVar "a"
             TypeCheckResult s1 t1 ex1 <- ti state e1
             let reason = AccessUnificationReason (e1, t1) x
             s2 <- liftUMtoTI pos reason $ mgu t1 (PolyDictType (Map.singleton x tv))
             return $ TypeCheckResult (s2 `composeSubst` s1) (apply s2 tv) (EAccess ex1 x)
-        PPrefix preOp e1 ->
+        Parser.PPrefix preOp e1 ->
           case filter ((== preOp) . InBuilt.opName) InBuilt.inBuiltPrefixOperations of
-            [] -> throwError $ Positioned pos (MissingVariableError preOp)
+            [] -> throwError $ Parser.Positioned pos (MissingVariableError preOp)
             op : _ -> do
               let prefixScheme = InBuilt.opType op
               prefixType <- instantiate prefixScheme
@@ -509,16 +514,16 @@ ti state (Positioned pos expression) =
               s2 <- liftUMtoTI pos reason $ mgu prefixType (t1 `FuncType` tv)
               return $ TypeCheckResult (s2 `composeSubst` s1) (apply s2 tv) (ENegate ex1)
 
-evaluateDimension :: Set.Set T.Text -> ParseDimension -> TI Dimension
+evaluateDimension :: Set.Set T.Text -> Parser.ParseDimension -> TI Dimension
 evaluateDimension allowedUnits dim =
   case dim of
-    PowParseDim components ->
+    Parser.PowParseDim components ->
       PowDim <$> foldM addToDimensionMap Map.empty components
-    NormalParseDim components ->
+    Parser.NormalParseDim components ->
       NormDim <$> foldM addToDimensionMap Map.empty components
   where
-    addToDimensionMap :: Map.Map PrimitiveDim Int -> Positioned ParseDimensionPart -> TI (Map.Map PrimitiveDim Int)
-    addToDimensionMap dimMap (Positioned p (ParseDimensionPart name power)) =
+    addToDimensionMap :: Map.Map PrimitiveDim Int -> Parser.Positioned Parser.ParseDimensionPart -> TI (Map.Map PrimitiveDim Int)
+    addToDimensionMap dimMap (Parser.Positioned p (Parser.ParseDimensionPart name power)) =
       if Set.member name allowedUnits
         then return $ Map.insert (LitDim name) power dimMap
-        else throwError $ Positioned p $ MissingUnitError name
+        else throwError $ Parser.Positioned p $ MissingUnitError name

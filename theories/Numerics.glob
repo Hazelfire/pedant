@@ -1,0 +1,11 @@
+DIGEST 0f4eb4cfaa2677439d9b504a6201da02
+FPedant.theories.Numerics
+R15:29 Coq.Arith.Arith <> <> lib
+R48:65 Coq.Strings.String <> <> lib
+R84:106 Coq.FSets.FMapInterface <> <> lib
+R125:143 Coq.FSets.FMapFacts <> <> lib
+R162:178 Coq.FSets.FMapAVL <> <> lib
+R197:209 Coq.Bool.Bool <> <> lib
+R228:255 Coq.Structures.OrderedTypeEx <> <> lib
+R274:279 Coq.ZArith.ZArith <> <> lib
+R298:303 Coq.QArith.QArith <> <> lib

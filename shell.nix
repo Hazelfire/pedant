@@ -1,6 +1,5 @@
 { pkgs ? import <nixpkgs> {} }:
 let
-
   myHaskell = (pkgs.haskellPackages.ghcWithHoogle (p: with p; [ 
     cabal-doctest 
     cabal-install 

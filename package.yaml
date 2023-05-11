@@ -10,12 +10,6 @@ extra-source-files:
 
 ghc-options: -Wall
 
-
-custom-setup:
-  dependencies:
-    - base >= 4.9 && < 5
-    - cabal-doctest >= 1 && <1.1
-
 dependencies:
   - base >= 4.9 && < 5
   - lsp

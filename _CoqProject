@@ -1,0 +1,3 @@
+-R . Pedant
+theories/Numerics.v
+theories/MyExtraction.v

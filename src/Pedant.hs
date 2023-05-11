@@ -1,29 +1,23 @@
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ImportQualifiedPost #-}
 
 -- | The parser for pedant, a small dimensional programming language
 module Pedant (pedantMain, evaluatePedantFile, EvaluationResult (..)) where
 
 import Control.Monad (forM, void)
-import qualified Data.Bifunctor as Bifunctor
-import qualified Data.List as List
-import qualified Data.List.NonEmpty as NonEmpty
-import qualified Data.Map as Map
+import Data.Bifunctor qualified as Bifunctor
+import Data.List qualified as List
+import Data.List.NonEmpty qualified as NonEmpty
+import Data.Map qualified as Map
 import Data.Map.Ordered ((|<))
-import qualified Data.Map.Ordered as OMap
-import Data.Maybe (mapMaybe)
-import qualified Data.Text as T
-import qualified Data.Text.IO as T
-import qualified Language.LSP.Types as LSP
-import qualified Pedant.FileResolver as Resolve
-import qualified Pedant.InBuilt as InBuilt
-import qualified Pedant.LSP as LSP
+import Data.Map.Ordered qualified as OMap
+import Data.Text qualified as T
+import Data.Text.IO qualified as T
+import Pedant.InBuilt qualified as InBuilt
+import Pedant.FileResolver qualified as Resolver
+import Pedant.LSP qualified as LSP
 import Pedant.Parser
-  ( Assignment (assignmentExpression, assignmentName),
-    PositionData (PositionData),
-    Positioned (Positioned),
-    Statement (AssignmentStatement),
-    makeErrorBundle,
+  ( makeErrorBundle,
   )
 import Pedant.TypeCheck
   ( TypeCheckState (tcsEnv),
@@ -42,101 +36,15 @@ import Pedant.Types
     InternalFunction (..),
     NumericValue (..),
     PedantParseError
-      ( ppeColumn,
-        ppeEndColumn,
-        ppeEndRow,
-        ppeErrString,
-        ppePrint,
-        ppeRow
+      ( ppePrint
       ),
     PrettyPrint (pPrint),
     Scheme,
     VariableName (VariableName),
   )
-import qualified System.Environment as Env
-import Text.Megaparsec
-  ( PosState
-      ( PosState,
-        pstateInput,
-        pstateLinePrefix,
-        pstateOffset,
-        pstateSourcePos,
-        pstateTabWidth
-      ),
-    SourcePos (sourceLine),
-    attachSourcePos,
-    defaultTabWidth,
-    initialPos,
-    unPos,
-  )
+import System.Environment qualified as Env
+import qualified Pedant.TypeCheck as TypeCheck
 
--- | getTypes, given a file, attempts to find the types of all assignments
---   in this file. It does this by creating a map of line numbers to error descriptions
-getTypes :: String -> IO (Map.Map Int T.Text)
-getTypes name = do
-  resolveResult <- Resolve.resolve name
-  contents <- readFile name
-  case resolveResult of
-    Right modules ->
-      case typeCheck emptyTypeCheckState modules of
-        (_, state) ->
-          let matchingModules = filter ((== name) . T.unpack . Resolve.moduleName) modules
-           in case matchingModules of
-                [] ->
-                  return Map.empty
-                (myModule : _) ->
-                  let offsetTypes =
-                        mapMaybe
-                          ( \case
-                              AssignmentStatement assignment ->
-                                let (Positioned (PositionData offset _) _) = assignmentExpression assignment
-                                    (TypeEnv varMap) = tcsEnv state
-                                 in case OMap.lookup (VariableName (T.pack name) (assignmentName assignment)) varMap of
-                                      Just (scheme, _) ->
-                                        Just (offset, pPrint scheme)
-                                      _ -> Nothing
-                              _ -> Nothing
-                          )
-                          (Resolve.moduleStatements myModule)
-                      initialPosState =
-                        PosState
-                          { pstateInput = contents,
-                            pstateOffset = 0,
-                            pstateSourcePos = initialPos name,
-                            pstateTabWidth = defaultTabWidth,
-                            pstateLinePrefix = ""
-                          }
-                      (positions, _) = attachSourcePos id (map fst offsetTypes) initialPosState
-                      entries = zip (map ((\a -> a - 1) . unPos . sourceLine . snd) positions) (map snd offsetTypes)
-                   in return (Map.fromList entries)
-    Left _ ->
-      return Map.empty
-
-getErrors :: String -> IO [LSP.Diagnostic]
-getErrors name = do
-  resolveResult <- Resolve.resolve name
-  contents <- T.readFile name
-  case resolveResult of
-    Right modules ->
-      case typeCheck emptyTypeCheckState modules of
-        (Nothing, _) ->
-          return []
-        (Just err, _) -> do
-          let diag = makeErrorBundle err name contents
-          return [parseErrorToDiagnostic diag]
-    Left err ->
-      return [parseErrorToDiagnostic (NonEmpty.head err)]
-
-parseErrorToDiagnostic :: PedantParseError -> LSP.Diagnostic
-parseErrorToDiagnostic err =
-  LSP.Diagnostic
-    (LSP.Range (LSP.Position (ppeRow err) (ppeColumn err)) (LSP.Position (ppeEndRow err) (ppeEndColumn err)))
-    (Just LSP.DsError)
-    Nothing -- code
-    (Just "lsp-ped") -- source
-    (ppeErrString err)
-    Nothing -- tags
-    (Just (LSP.List []))
 
 -- | Main Function
 pedantMain :: IO ()
@@ -144,7 +52,7 @@ pedantMain = do
   args <- Env.getArgs
   case args of
     ("lsp" : _) -> do
-      void $ LSP.runLSP getErrors getTypes
+      void LSP.runLSP
     ("compile" : fileName : _) -> print =<< evaluatePedantFile fileName
     _ -> putStrLn "pedant compile [file]"
 
@@ -161,7 +69,13 @@ instance Show EvaluationResult where
     T.unpack . T.unlines $
       map
         ( \(VariableName moduleName name, (value, scheme)) ->
-            moduleName <> "." <> name <> " = " <> T.pack (show value) <> " " <> pPrint scheme
+            case value of
+              (FuncValue _ _) ->
+                moduleName <> "." <> name <> " : " <> pPrint scheme
+              (InternalFunctionValue _) ->
+                moduleName <> "." <> name <> " : " <> pPrint scheme
+              _ ->
+                moduleName <> "." <> name <> " = " <> T.pack (show value) <> " " <> pPrint scheme
         )
         (List.reverse (OMap.assocs s))
   show (ParseError err) =
@@ -169,19 +83,23 @@ instance Show EvaluationResult where
   show (TypeCheckingError err) = T.unpack $ ppePrint err
   show (EvaluationError err) = T.unpack err
 
+-- Takes a file and returns it's result from evaluation
 evaluatePedantFile :: String -> IO EvaluationResult
 evaluatePedantFile fileName = do
-  resolveResult <- Resolve.resolve fileName
+  resolveResult <- Resolver.resolveIO fileName
   contents <- T.readFile fileName
+  -- After the file has been read and resolved
   case resolveResult of
     Right modules -> do
+      -- Typecheck modules
       case typeCheck emptyTypeCheckState modules of
         (Nothing, valid) -> do
           let (TypeEnv env) = tcsEnv valid
-          let program = List.reverse $ map (Bifunctor.second snd) $ OMap.assocs env
-           in case executeProgram OMap.empty program of
+          let program = List.reverse $ map (Bifunctor.second TypeCheck.variableInfoExecutionExpression) $ OMap.assocs env
+           in -- Now execute program
+              case executeProgram OMap.empty program of
                 Right result ->
-                  let valueTypeMap = OMap.intersectionWith (\_ (scheme, _) value -> (value, scheme)) env result
+                  let valueTypeMap = OMap.intersectionWith (\ _ (TypeCheck.VariableInfo scheme _ _) value -> (value, scheme)) env result
                    in return (EvaluationSuccess valueTypeMap)
                 Left err ->
                   return (EvaluationError err)

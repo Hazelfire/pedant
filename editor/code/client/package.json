@@ -1,0 +1,19 @@
+
+{
+	"name": "pedant-lsp-client",
+	"description": "Pedant Language Server Client",
+	"author": "Sam Nolan",
+	"license": "MIT",
+	"version": "0.0.1",
+	"engines": {
+		"vscode": "^1.75.0"
+	},
+	"dependencies": {
+		"vscode-languageclient": "^8.1.0"
+	},
+	"devDependencies": {
+		"@types/vscode": "^1.75.1",
+		"@vscode/test-electron": "^2.2.3"
+	}
+    
+}

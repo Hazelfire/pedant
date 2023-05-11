@@ -231,6 +231,7 @@ data ExecutionStatement
 data Operation = Add | Sub | Mult | Div | App | Power
   deriving (Show)
 
+
 data PedantParseError = PedantParseError
   { ppeErrString :: T.Text,
     ppeColumn :: Int,

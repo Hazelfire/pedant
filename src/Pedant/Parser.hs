@@ -1,5 +1,4 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
 
 -- | The parser for pedant. Creates a syntax tree from the file
@@ -35,7 +34,7 @@ import Text.Megaparsec
 import Text.Megaparsec.Char
 import qualified Text.Megaparsec.Char.Lexer as L
 
--- | c We now define a parser for this typed language
+-- | We now define a parser for this typed language
 data Assignment = Assignment
   { assignmentName :: T.Text,
     assignmentArguments :: [T.Text],
@@ -49,11 +48,16 @@ data Statement
   | ImportStatement (Positioned T.Text) [Positioned T.Text]
   deriving (Show)
 
-data PositionData = PositionData Int Int
+data PositionData = PositionData {
+  pdOffset :: Int,
+  pdLength :: Int
+}
   deriving (Show, Eq, Ord)
 
-data Positioned a = Positioned PositionData a
-  deriving (Show)
+data Positioned a = Positioned {
+  positionedData :: PositionData,
+  positionedValue :: a
+}  deriving (Show)
 
 instance Eq a => Eq (Positioned a) where
   (==) (Positioned a1 b1) (Positioned a2 b2) = a1 == a2 && b1 == b2
