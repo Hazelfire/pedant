@@ -119,7 +119,7 @@ lspOptions =
 generalError :: T.Text -> LSP.Diagnostic
 generalError message = 
   LSP.Diagnostic
-    (LSP.Range (LSP.Position 0 0) (LSP.Position 1 0))
+    (LSP.Range (LSP.Position 0 0) (LSP.Position 2 0))
     (Just LSP.DsError)
     Nothing -- code
     (Just "lsp-ped") -- source

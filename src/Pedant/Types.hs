@@ -5,6 +5,7 @@ module Pedant.Types
     PrimitiveDim (..),
     VariableName (..),
     Scheme (..),
+    TypeName (..),
     Type (..),
     baseUnitsDim,
     Operation (..),
@@ -198,7 +199,7 @@ instance Show NumericValue where
 
 data ExecutionValue
   = ExecutionValueNumber Double
-  | ExecutionValueEmptyList
+  | ExecutionValueList [ExecutionExpression]
   | ExecutionValueDict (Map.Map T.Text ExecutionExpression)
   | ExecutionValueFunc T.Text ExecutionExpression
   deriving (Show)
@@ -216,12 +217,6 @@ newtype InternalFunction = InternalFunction (NumericValue -> NumericValue)
 
 instance Show InternalFunction where
   show _ = "INTERNAL FUNCTION"
-
-data VariableName = VariableName
-  { varNameModule :: T.Text,
-    varNameName :: T.Text
-  }
-  deriving (Show, Eq, Ord)
 
 data ExecutionStatement
   = ExecAssignment T.Text ExecutionExpression
@@ -242,11 +237,12 @@ data PedantParseError = PedantParseError
   }
   deriving (Show)
 
-data Scheme = Scheme [T.Text] Type
+newtype TypeName = TypeName {showTypeNameText :: T.Text } deriving (Show)
+data Scheme = Scheme [TypeName] Type
 
 instance Show Scheme where
   show (Scheme [] t) = show t
-  show (Scheme args t) = "∀" ++ T.unpack (T.unwords args) ++ ". " ++ show t
+  show (Scheme args t) = "∀" ++ T.unpack (T.unwords (map showTypeNameText args)) ++ ". " ++ show t
 
 instance PrettyPrint PrimitiveDim where
   pPrint (LitDim s) = s

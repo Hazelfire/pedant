@@ -41,16 +41,9 @@ executable:
 
 tests:
   tests:
-    main: Spec.hs
+    main: Main.hs
     source-dirs: 
       - test
       - src
     dependencies:
       - hspec
-  doctests:
-    main: Doctest.hs
-    source-dirs: 
-      - doctest
-      - src
-    dependencies:
-      - doctest

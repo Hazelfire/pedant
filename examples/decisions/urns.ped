@@ -1,4 +1,1 @@
-// thing_test
-new_thing = 3
-urn_1 = 2 + 2
-syntex_error = 2
+addOne = 2

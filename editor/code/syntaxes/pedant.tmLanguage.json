@@ -1,64 +1,99 @@
 {
     "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
     "name": "Pedant",
+    "scopeName": "source.pedant",
+    "fileTypes": [
+        "ped"
+    ],
     "patterns": [
         {
-            "include": "#comments"
+            "name": "comment.line.pedant",
+            "match": "\/\/.*$",
+            "captures": {
+                "0": {
+                    "name": "punctuation.definition.comment.pedant"
+                }
+            }
         },
         {
-            "include": "#numbers"
+            "name": "keyword.control.import.pedant",
+            "match": "\\bimport\\b",
+            "captures": {
+                "0": {
+                    "name": "keyword.control.import.pedant"
+                }
+            }
         },
         {
-            "include": "#units"
+            "name": "keyword.control.unit.pedant",
+            "match": "\\bunit\\b",
+            "captures": {
+                "0": {
+                    "name": "keyword.control.unit.pedant"
+                }
+            }
         },
         {
-            "include": "#operators"
+            "name": "constant.numeric.pedant",
+            "match": "\\b\\d+(\\.\\d+)?\\b",
+            "captures": {
+                "0": {
+                    "name": "constant.numeric.pedant"
+                }
+            }
         },
         {
-            "include": "#variables"
+            "name": "constant.language.unit.pedant",
+            "match": "\\b\\w+\\b(?=\\s*-?\\d*)",
+            "captures": {
+                "0": {
+                    "name": "constant.language.unit.pedant"
+                }
+            }
+        },
+        {
+            "name": "constant.language.unit-power.pedant",
+            "match": "\\b\\w+-\\d+\\b",
+            "captures": {
+                "0": {
+                    "name": "constant.language.unit-power.pedant"
+                }
+            }
+        },
+        {
+            "name": "variable.assignment.pedant",
+            "begin": "\\b[A-Za-z_][A-Za-z0-9_]*\\b",
+            "end": "=",
+            "beginCaptures": {
+                "0": {
+                    "name": "variable.assignment.pedant"
+                }
+            },
+            "endCaptures": {
+                "0": {
+                    "name": "keyword.operator.assignment.pedant"
+                }
+            },
+            "patterns": [
+                {
+                    "include": "#expression"
+                }
+            ]
         }
     ],
     "repository": {
-        "comments": {
+        "expression": {
             "patterns": [
                 {
-                    "name": "comment.line.double-slash",
-                    "match": "//.*"
-                }
-            ]
-        },
-        "numbers": {
-            "patterns": [
+                    "include": "#constant.numeric.pedant"
+                },
                 {
-                    "name": "constant.numeric",
-                    "match": "\\b[-+]?\\d+(\\.\\d+)?\\b"
-                }
-            ]
-        },
-        "units": {
-            "patterns": [
+                    "include": "#constant.language.unit.pedant"
+                },
                 {
-                    "name": "constant.language.unit",
-                    "match": "\\b(usd|people|nets)\\b"
-                }
-            ]
-        },
-        "operators": {
-            "patterns": [
-                {
-                    "name": "keyword.operator",
-                    "match": "\\+|-|\\*|\\/|="
-                }
-            ]
-        },
-        "variables": {
-            "patterns": [
-                {
-                    "name": "variable",
-                    "match": "\\b[a-zA-Z_][a-zA-Z0-9_]*\b"
+                    "include": "#constant.language.unit-power.pedant"
                 }
             ]
         }
-    },
-    "scopeName": "source.pedant"
+    }
 }

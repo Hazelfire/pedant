@@ -7,23 +7,21 @@ module Pedant.Parser
     PedantParseError (..),
     Positioned (..),
     Operation (..),
-    ParseDimensionPart (..),
-    ParseDimension (..),
-    ParseLiteral (..),
+    DimensionPart (..),
+    Dimension (..),
     PositionData (..),
-    ParseExpression (..),
+    Expression (..),
     Assignment (..),
     Statement (..),
     makeErrorBundle,
   )
 where
 
-import Control.Monad.Combinators.Expr
+import qualified Control.Monad.Combinators.Expr as Expr
 import qualified Data.Bifunctor as Bifunctor
 import qualified Data.List as List
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.Map as Map
-import Data.Maybe (catMaybes)
 import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -38,7 +36,7 @@ import qualified Text.Megaparsec.Char.Lexer as L
 data Assignment = Assignment
   { assignmentName :: T.Text,
     assignmentArguments :: [T.Text],
-    assignmentExpression :: PositionedExpression
+    assignmentExpression :: Positioned Expression
   }
   deriving (Show)
 
@@ -65,62 +63,59 @@ instance Eq a => Eq (Positioned a) where
 instance Functor Positioned where
   fmap f (Positioned p x) = Positioned p (f x)
 
-type PositionedExpression = Positioned ParseExpression
-
-data ParseDimensionPart = ParseDimensionPart
+data DimensionPart = DimensionPart
   { pdpName :: T.Text,
     pdpPower :: Int
   }
   deriving (Show, Eq)
 
-instance PrettyPrint ParseDimensionPart where
-  pPrint (ParseDimensionPart name power) =
+instance PrettyPrint DimensionPart where
+  pPrint (DimensionPart name power) =
     if power == 1
       then name
       else T.concat [name, T.pack (show power)]
 
-data ParseDimension
-  = PowParseDim [Positioned ParseDimensionPart]
-  | NormalParseDim [Positioned ParseDimensionPart]
+data Dimension
+  = PowParseDim [Positioned DimensionPart]
+  | NormalParseDim [Positioned DimensionPart]
   deriving (Show, Eq)
 
-instance PrettyPrint ParseDimension where
+instance PrettyPrint Dimension where
   pPrint (NormalParseDim parts) = T.unwords (map pPrint parts)
   pPrint (PowParseDim parts) = "^" <> T.unwords (map pPrint parts)
 
-data ParseLiteral
-  = ParseNumber Double ParseDimension
-  | ParseEmptyList
-  | ParseRecord (Map.Map T.Text PositionedExpression)
-  deriving (Show, Eq)
+newtype BinaryOperation = BinaryOperation T.Text deriving (Show, Eq)
+newtype VariableName = VariableName T.Text deriving (Show, Eq)
+newtype RecordKey = RecordKey T.Text deriving (Show, Eq, Ord)
+newtype PrefixOperation = PrefixOperation T.Text deriving (Show, Eq)
+newtype AccessKey = AccessKey T.Text deriving (Show, Eq)
 
-instance PrettyPrint ParseLiteral where
-  pPrint (ParseNumber num dim) = T.unwords [T.pack $ show num, pPrint dim]
-  pPrint ParseEmptyList = "[]"
-  pPrint (ParseRecord op) =
-    T.concat
-      [ "{",
-        T.intercalate ", " (map (\(key, value) -> T.concat [key, " = ", pPrint value]) (Map.toAscList op)),
-        "}"
-      ]
-
-data ParseExpression
-  = PBinOp T.Text PositionedExpression PositionedExpression
-  | PVariable T.Text
-  | PConstant ParseLiteral
-  | PPrefix T.Text PositionedExpression
-  | PAccess PositionedExpression T.Text
+data Expression
+  = BinOp BinaryOperation (Positioned Expression) (Positioned Expression)
+  | Variable VariableName
+  | Number Double Dimension
+  | List [Positioned Expression]
+  | Record (Map.Map RecordKey (Positioned Expression))
+  | Prefix PrefixOperation (Positioned Expression)
+  | Access (Positioned Expression) AccessKey
   deriving (Show, Eq)
 
 instance PrettyPrint a => PrettyPrint (Positioned a) where
   pPrint (Positioned _ a) = pPrint a
 
-instance PrettyPrint ParseExpression where
-  pPrint (PBinOp op e1 e2) = T.unwords [pPrint e1, op, pPrint e2]
-  pPrint (PVariable var) = var
-  pPrint (PConstant lit) = pPrint lit
-  pPrint (PPrefix op e1) = T.concat [op, pPrint e1]
-  pPrint (PAccess e1 att) = T.concat [pPrint e1, att]
+instance PrettyPrint Expression  where
+  pPrint (BinOp (BinaryOperation op) e1 e2) = T.unwords [pPrint e1, op, pPrint e2]
+  pPrint (Variable (VariableName var)) = var
+  pPrint (Prefix (PrefixOperation op) e1) = T.concat [op, pPrint e1]
+  pPrint (Access e1 (AccessKey att)) = T.concat [pPrint e1, att]
+  pPrint (Number num dim) = T.unwords [T.pack $ show num, pPrint dim]
+  pPrint (List list) = T.concat ["[", T.intercalate ", " (map pPrint list), "]"]
+  pPrint (Record op) =
+    T.concat
+      [ "{",
+        T.intercalate ", " (map (\(RecordKey key, value) -> T.concat [key, " = ", pPrint value]) (Map.toAscList op)),
+        "}"
+      ]
 
 data Function = NaturalLogarithm
   deriving (Show)
@@ -134,105 +129,102 @@ sc =
     (L.skipLineComment "//")
     (L.skipBlockComment "/*" "*/")
 
+scn :: Parser ()
+scn =
+  L.space
+    space1
+    (L.skipLineComment "//")
+    (L.skipBlockComment "/*" "*/")
+
 lexeme :: Parser a -> Parser a
 lexeme = L.lexeme sc
 
 symbol :: Text -> Parser Text
 symbol = L.symbol sc
 
+-- Parentheses, brackets, and braces
 parens :: Parser a -> Parser a
 parens = between (symbol "(") (symbol ")")
 
-pVariable :: Parser PositionedExpression
-pVariable = position (PVariable <$> pName)
+braces :: Parser a -> Parser a
+braces = between (symbol "{") (symbol "}")
 
-pTypedNumber :: Parser () -> Parser ParseLiteral
-pTypedNumber sc' = do
-  num <- L.lexeme sc (try L.float <|> L.decimal)
-  ParseNumber num <$> parseDimension sc'
+brackets :: Parser a -> Parser a
+brackets = between (symbol "[") (symbol "]")
+
+-- Comma-separated list of expressions
+commaSepExpr :: Parser () -> Parser [Positioned Expression]
+commaSepExpr sc' = lexeme (pExpr sc' `sepBy` symbol ",")
+
+pVariable :: Parser (Positioned Expression)
+pVariable = position (Variable . VariableName <$> identifier)
+
+number :: RealFloat a => Parser a
+number = lexeme (try L.float <|> L.decimal)
+
+pTypedNumber :: Parser () -> Parser Expression
+pTypedNumber sc' = Number <$> number <*> parseDimension sc'
 
 -- Lists are parsed as an empty list with all elements concatenated into them
-pTypedList :: Parser () -> Parser ParseExpression
-pTypedList sc' = do
-  _ <- L.lexeme sc' (char '[')
-  choice
-    [ PConstant ParseEmptyList <$ L.lexeme sc' (char ']'),
-      startList
-    ]
-  where
-    startList :: Parser ParseExpression
-    startList = do
-      num <- L.lexeme sc' $ pExpr sc'
-      choice
-        [ do
-            _ <- L.lexeme sc' (char ',')
-            PBinOp ":" num <$> position startList,
-          PConstant ParseEmptyList <$ L.lexeme sc' (char ']')
-        ]
+pTypedList :: Parser () -> Parser Expression
+pTypedList sc' = List <$> brackets (commaSepExpr sc')
 
-pTypedRecord :: Parser () -> Parser ParseLiteral
-pTypedRecord sc' = do
-  _ <- L.lexeme sc' (char '{')
-  ParseRecord . Map.fromList <$> startRecord
+pTypedRecord :: Parser () -> Parser Expression
+pTypedRecord sc' = Record . Map.fromList <$> braces (pair `sepBy` symbol ",")
   where
-    startRecord :: Parser [(T.Text, PositionedExpression)]
-    startRecord = do
-      name <- L.lexeme sc' pName
-      _ <- L.lexeme sc' $ char '='
-      value <- L.lexeme sc' $ pExpr sc'
-      rest <- ([] <$ L.lexeme sc' (char '}')) <|> (L.lexeme sc' (char ',') >> startRecord)
-      return ((name, value) : rest)
+    pair :: Parser (RecordKey, Positioned Expression)
+    pair = (,) <$> (RecordKey <$> identifier )<* symbol "=" <*> pExpr sc'
 
-parseDimension :: Parser () -> Parser ParseDimension
+parseDimension :: Parser () -> Parser Dimension
 parseDimension sc' = (PowParseDim <$> try (char '^' *> parseNextDim [])) <|> (NormalParseDim <$> pLoop [])
   where
-    pLoop :: [Positioned ParseDimensionPart] -> Parser [Positioned ParseDimensionPart]
+    pLoop :: [Positioned DimensionPart] -> Parser [Positioned DimensionPart]
     pLoop p = parseNextDim p <|> return p
 
-    parseNextDim :: [Positioned ParseDimensionPart] -> Parser [Positioned ParseDimensionPart]
+    parseNextDim :: [Positioned DimensionPart] -> Parser [Positioned DimensionPart]
     parseNextDim oldDim = do
       dim <- L.lexeme sc' (position pSingleDim)
       pLoop (dim : oldDim)
 
-    pSingleDim :: Parser ParseDimensionPart
+    pSingleDim :: Parser DimensionPart
     pSingleDim = do
       name <- (:) <$> letterChar <*> many letterChar
       number <- fromInteger <$> L.signed (pure ()) L.decimal <|> return 1
-      return (ParseDimensionPart (T.pack name) number)
+      return (DimensionPart (T.pack name) number)
 
-pConstant :: Parser () -> Parser PositionedExpression
-pConstant sc' = position (pTypedList sc' <|> PConstant <$> (pTypedRecord sc' <|> pTypedNumber sc'))
 
-pName :: Parser T.Text
-pName = T.pack <$> ((:) <$> letterChar <*> many (alphaNumChar <|> char '_') <?> "name")
+identifier :: Parser T.Text
+identifier = lexeme $ T.pack <$> ((:) <$> letterChar <*> many (alphaNumChar <|> char '_') <?> "name")
 
-pTerm :: Parser () -> Parser PositionedExpression
+pTerm :: Parser () -> Parser (Positioned Expression)
 pTerm sc' =
   let mainExpression =
         choice
           [ parens (pExpr sc'),
             L.lexeme sc' pVariable,
-            pConstant sc'
+            position (pTypedList sc'),
+            position (pTypedRecord sc'),
+            position (pTypedNumber sc')
           ]
    in do
         expression <- mainExpression
         L.lexeme sc' (accessor expression <|> return expression)
   where
-    accessor :: PositionedExpression -> Parser PositionedExpression
+    accessor :: Positioned Expression -> Parser (Positioned Expression)
     accessor expr = do
       _ <- char '.'
-      L.lexeme sc' $ position (PAccess expr <$> pName)
+      L.lexeme sc' $ position (Access expr <$> (AccessKey <$> identifier))
 
-pLine :: Parser (Maybe Statement)
-pLine =
-  choice
-    [ Just <$> pStatement,
-      return Nothing
-    ]
-
+-- | Runs full programs, such as
+-- >>> :set -XOverloadedStrings
+-- >>> parse program "" "x = 2\n"
 program :: Parser [Statement]
-program = catMaybes <$> many (sc *> pLine <* newline) <* eof
+program = manyTill (pStatement <* scn) eof
 
+-- | Runs full programs, such as
+-- >>> :set -XOverloadedStrings
+-- >>> parse pStatement "" "x = 2\n"
+-- Right (AssignmentStatement (Assignment {assignmentName = "x", assignmentArguments = [], assignmentExpression = Positioned {positionedData = PositionData {pdOffset = 6, pdLength = 1}, positionedValue = PConstant (ParseNumber 2.0 (NormalParseDim []))}}))
 pStatement :: Parser Statement
 pStatement = L.lineFold scn $ \sc' ->
   let new_space_consumer = try sc' <|> sc
@@ -245,22 +237,22 @@ pStatement = L.lineFold scn $ \sc' ->
 -- | Import statements. They come in the form of:
 -- import [module]([name1, name2, ...])
 -- >>> :set -XOverloadedStrings
--- >>> parse (pImport sc) "" "import moduleName(name1, name2)\n"
+-- >>> parse (pImport sc) "" "import moduleName(name1, name2)"
 -- Right (ImportStatement (Positioned (PositionData 7 10) "moduleName") [Positioned (PositionData 18 5) "name1",Positioned (PositionData 25 5) "name2"])
 --
 -- Empty imports are invalid:
--- >>> parse (pImport sc) "" "import moduleName()\n"
+-- >>> parse (pImport sc) "" "import moduleName()"
 -- Left (ParseErrorBundle {bundleErrors = TrivialError 18 (Just (Tokens (')' :| ""))) (fromList [Label ('n' :| "ame")]) :| [], bundlePosState = PosState {pstateInput = "import moduleName()\n", pstateOffset = 0, pstateSourcePos = SourcePos {sourceName = "", sourceLine = Pos 1, sourceColumn = Pos 1}, pstateTabWidth = Pos 8, pstateLinePrefix = ""}})
 pImport :: Parser () -> Parser Statement
 pImport sc' = do
   _ <- try (L.lexeme sc' (symbol "import"))
-  fileName <- position $ L.lexeme sc' pName
+  fileName <- position identifier
   _ <- L.lexeme sc' (symbol "(")
   ImportStatement fileName <$> pImportList
   where
     pImportList :: Parser [Positioned T.Text]
     pImportList = do
-      importName <- position $ L.lexeme sc' pName
+      importName <- position identifier
       choice
         [ do
             _ <- L.lexeme sc' (symbol ",")
@@ -273,31 +265,22 @@ pImport sc' = do
 pUnit :: Parser () -> Parser Statement
 pUnit sc' = do
   _ <- L.lexeme sc' (symbol "unit")
-  UnitStatement <$> (position pName `sepBy1` sc')
+  UnitStatement <$> (position identifier `sepBy1` sc')
 
+-- | Parses an assignment:
+-- >>> :set -XOverloadedStrings
+-- >>> parse (pAssignment sc) "" "x = 2"
 pAssignment :: Parser () -> Parser Assignment
-pAssignment sc' = do
-  name <- lexeme pName
-  arguments <- many (lexeme pName)
-  _ <- symbol "="
-  sc'
-  Assignment name arguments <$> pExpr sc'
+pAssignment sc' = Assignment <$> identifier <*> many identifier <* symbol "=" <*> pExpr sc'
 
-scn :: Parser ()
-scn =
-  L.space
-    space1
-    (L.skipLineComment "//")
-    (L.skipBlockComment "/*" "*/")
-
-pExpr :: Parser () -> Parser PositionedExpression
+pExpr :: Parser () -> Parser (Positioned Expression)
 pExpr sc' =
-  makeExprParser (pTerm sc') (operatorTable sc')
+  Expr.makeExprParser (pTerm sc') (operatorTable sc')
 
-operatorTable :: Parser () -> [[Operator Parser PositionedExpression]]
+operatorTable :: Parser () -> [[Expr.Operator Parser (Positioned Expression)]]
 operatorTable sc' =
-  let prefixOps = map (\op -> (InBuilt.opPrecedence op, prefix sc' (InBuilt.opName op) (PPrefix (InBuilt.opName op)))) InBuilt.inBuiltPrefixOperations
-      binaryOps = map (\op -> (InBuilt.opPrecedence op, binary sc' (InBuilt.opName op) (PBinOp (InBuilt.opName op)))) InBuilt.inBuiltBinaryOperations
+  let prefixOps = map (\op -> (InBuilt.opPrecedence op, prefix sc' (InBuilt.opName op) (Prefix $ PrefixOperation (InBuilt.opName op)))) InBuilt.inBuiltPrefixOperations
+      binaryOps = map (\op -> (InBuilt.opPrecedence op, binary sc' (InBuilt.opName op) (BinOp $ BinaryOperation (InBuilt.opName op)))) InBuilt.inBuiltBinaryOperations
       combinedOps = prefixOps ++ binaryOps
       sortedOps = List.groupBy (\a b -> fst a == fst b) (List.sortOn fst combinedOps)
    in map (map snd) sortedOps
@@ -309,9 +292,9 @@ position parser = do
   newOffset <- getOffset
   return (Positioned (PositionData offset (newOffset - offset)) x)
 
-binary :: Parser () -> Text -> (PositionedExpression -> PositionedExpression -> ParseExpression) -> Operator Parser PositionedExpression
+binary :: Parser () -> Text -> (Positioned Expression -> Positioned Expression -> Expression) -> Expr.Operator Parser (Positioned Expression)
 binary sc' name f =
-  InfixL
+  Expr.InfixL
     ( do
         _ <- L.symbol sc' name
         return (combinePositions f)
@@ -321,9 +304,9 @@ combinePositions :: (Positioned a -> Positioned b -> c) -> Positioned a -> Posit
 combinePositions f a@(Positioned (PositionData startOffset _) _) b@(Positioned (PositionData start2 l) _) =
   Positioned (PositionData startOffset ((start2 + l) - startOffset)) (f a b)
 
-prefix :: Parser () -> Text -> (PositionedExpression -> ParseExpression) -> Operator Parser PositionedExpression
+prefix :: Parser () -> Text -> (Positioned Expression -> Expression) -> Expr.Operator Parser (Positioned Expression)
 prefix sc' name f =
-  Prefix
+  Expr.Prefix
     ( do
         offset <- getOffset
         _ <- L.symbol sc' name
@@ -347,7 +330,7 @@ errorBundleToPedantError bundle =
 
 parseProgram :: String -> T.Text -> Either (NonEmpty PedantParseError) [Statement]
 parseProgram name contents = do
-  Bifunctor.first errorBundleToPedantError $ parse program name contents
+  Bifunctor.first errorBundleToPedantError $ parse program name (T.append contents "\n")
 
 -- | Makes a bundle of errors based on a file name contents and positions.
 makeErrorBundle :: (ShowErrorComponent a, a ~ Positioned b) => a -> String -> T.Text -> PedantParseError

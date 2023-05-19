@@ -11,7 +11,6 @@ let
     megaparsec 
     ordered-containers 
     ormolu 
-    stack 
   ]));
 in
 pkgs.mkShell {

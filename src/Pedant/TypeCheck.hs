@@ -38,9 +38,9 @@ data TypeError
   deriving (Eq)
 
 data ReasonForUnification
-  = BinaryOpUnificationReason T.Text (Parser.Positioned Parser.ParseExpression, Type) (Parser.Positioned Parser.ParseExpression, Type)
-  | PrefixOpUnificationReason T.Text (Parser.Positioned Parser.ParseExpression, Type)
-  | AccessUnificationReason (Parser.Positioned Parser.ParseExpression, Type) T.Text
+  = BinaryOpUnificationReason T.Text (Parser.Positioned Parser.Expression, Type) (Parser.Positioned Parser.Expression, Type)
+  | PrefixOpUnificationReason T.Text (Parser.Positioned Parser.Expression, Type)
+  | AccessUnificationReason (Parser.Positioned Parser.Expression, Type) T.Text
   deriving (Eq)
 
 instance Ord (Parser.Positioned TypeError) where
@@ -202,6 +202,8 @@ generalize env t = Scheme vars t
 
 newtype TIState = TIState {tiSupply :: Int}
 
+newtype TypeName = TypeName T.Text
+
 type TI a = ExceptT (Parser.Positioned TypeError) (State TIState) a
 
 runTI :: TI a -> (Either (Parser.Positioned TypeError) a, TIState)
@@ -210,12 +212,11 @@ runTI t =
   where
     initTIState = TIState {tiSupply = 0}
 
-newTyVar :: T.Text -> TI Type
-newTyVar prefix =
-  do
+newTyVar :: TI Type
+newTyVar = do
     s <- get
     put s {tiSupply = tiSupply s + 1}
-    return (PolyType (prefix <> T.pack (show (tiSupply s))))
+    return (PolyType ("a" <> T.pack (show (tiSupply s))))
 
 newTyDimension :: T.Text -> TI Dimension
 newTyDimension prefix =
@@ -223,17 +224,6 @@ newTyDimension prefix =
     s <- get
     put s {tiSupply = tiSupply s + 1}
     return (NormDim $ Map.singleton (PolyDim $ prefix <> T.pack (show (tiSupply s))) 1)
-
-instantiate :: Scheme -> TI Type
-instantiate (Scheme vars t) = do
-  nvars <- mapM (\_ -> newTyVar "a") vars
-  ndims <- mapM (\_ -> newTyDimension "a") vars
-  let s =
-        nullSubst
-          { subTypes = Map.fromList (zip vars nvars),
-            subDimensions = Map.fromList (zip vars ndims)
-          }
-  return $ apply s t
 
 -- | Unification Monad
 type UM a = ExceptT UnificationTrace (State TIState) a
@@ -247,68 +237,6 @@ liftUMtoTI p reason m = do
       return result
     (Left err, _) -> throwError $ Parser.Positioned p $ UnificationError reason err
 
--- | Attempts to find a unification between dimensions
-mguDim :: Dimension -> Dimension -> UM Substitution
-mguDim (NormDim t) (NormDim u) =
-  if u == t
-    then return nullSubst
-    else -- unifying dimensions is a bit tricky, and this method is not perfect and leaves out some possible (but rare) unifications
-
-      let dividedOut = Map.filter (/= 0) $ Map.unionWith (+) t (Map.map negate u)
-          polyDim =
-            Maybe.mapMaybe
-              ( \(k, v) ->
-                  case (k, v) of
-                    (PolyDim d, 1) -> Just (d, 1)
-                    (PolyDim d, -1) -> Just (d, -1)
-                    _ -> Nothing
-              )
-              (Map.toList dividedOut)
-       in case polyDim of
-            (firstDim, power) : _ ->
-              let withoutPolyVar = Map.delete (PolyDim firstDim) dividedOut
-                  dividedByPower = Map.map (`quot` (- power)) withoutPolyVar
-               in return $ nullSubst {subDimensions = Map.singleton firstDim (NormDim dividedByPower)}
-            [] ->
-              throwError [(BaseDim (NormDim t), BaseDim (NormDim u))]
-mguDim (PowDim t) (PowDim u) =
-  trace (show (PowDim t) ++ " unify " ++ show (PowDim u)) $
-    if u == t
-      then return nullSubst
-      else
-        let dividedOut = Map.filter (/= 0) $ Map.unionWith (+) t (Map.map negate u)
-            polyDim =
-              Maybe.mapMaybe
-                ( \(k, v) ->
-                    case (k, v) of
-                      (PolyDim d, 1) -> Just (d, 1)
-                      (PolyDim d, -1) -> Just (d, -1)
-                      _ -> Nothing
-                )
-                (Map.toList (traceShowId dividedOut))
-         in case traceShowId polyDim of
-              (firstDim, power) : _ ->
-                let withoutPolyVar = Map.delete (PolyDim firstDim) dividedOut
-                    dividedByPower = Map.map (`quot` (- power)) (traceShowId withoutPolyVar)
-                 in return $ nullSubst {subDimensions = Map.singleton firstDim (PowDim (traceShowId dividedByPower))}
-              [] ->
-                throwError [(BaseDim (PowDim t), BaseDim (PowDim u))]
-mguDim (NormDim u) (PowDim t) = do
-  -- I can only unify BaseDims and PowDims if they both unify to dimensionless
-  trace (show (NormDim u) ++ " unify " ++ show (PowDim t)) $
-    ( do
-        s1 <- mguDim (NormDim Map.empty) (NormDim u)
-        s2 <- mguDim (PowDim Map.empty) (apply s1 (PowDim t))
-        return $ s2 `composeSubst` s1
-    )
-      `catchError` (\_ -> throwError [(BaseDim (NormDim u), BaseDim (PowDim t))])
-mguDim (PowDim u) (NormDim t) =
-  do
-    -- I can only unify BaseDims and PowDims if they both unify to dimensionless
-    s1 <- mguDim (PowDim Map.empty) (PowDim u)
-    s2 <- mguDim (NormDim Map.empty) (apply s1 (NormDim t))
-    return $ s2 `composeSubst` s1
-    `catchError` (\_ -> throwError [(BaseDim (NormDim u), BaseDim (PowDim t))])
 
 mgu :: Type -> Type -> UM Substitution
 mgu a b = wrapError a b (mgu' a b)
@@ -442,31 +370,33 @@ data TypeCheckResult = TypeCheckResult Substitution Type ExecutionExpression
 foldSubst :: Traversable t => t Substitution -> Substitution
 foldSubst = foldr composeSubst nullSubst
 
-ti :: TypeCheckState -> Parser.Positioned Parser.ParseExpression -> TI TypeCheckResult
+ti :: TypeCheckState -> Parser.Positioned Parser.Expression -> TI TypeCheckResult
 ti state (Parser.Positioned pos expression) =
   let (TypeEnv env) = tcsEnv state
       allowedUnits = Set.filter (\(VariableName moduleName _) -> moduleName == tcsCurrentModule state) $ tcsUnits state
    in case expression of
-        Parser.PVariable n ->
+        -- We got a variable
+        Parser.Variable n ->
+          -- Lookup variable in type environment
           case OMap.lookup (VariableName (tcsCurrentModule state) n) env of
             Nothing ->
               case filter ((== n) . InBuilt.funcName) InBuilt.inBuiltFunctions of
                 func : _ -> do
-                  t <- instantiate (InBuilt.funcType func)
+                  let t = InBuilt.funcType func
                   return $ TypeCheckResult nullSubst t (EInternalFunc $ InBuilt.funcDef func)
                 [] ->
                   throwError $ Parser.Positioned pos $ MissingVariableError n
             Just vi -> do
-              t <- instantiate (variableInfoScheme vi)
+              t <- variableInfoScheme vi
               return $ TypeCheckResult nullSubst t (EVariable (VariableName (tcsCurrentModule state) n))
-        Parser.PConstant (Parser.ParseNumber value pdim) -> do
+        Parser.Number value pdim -> do
           dimension <- evaluateDimension (Set.map (\(VariableName _ name) -> name) allowedUnits) pdim
           return $ TypeCheckResult nullSubst (BaseDim dimension) (EConstant $ ExecutionValueNumber value)
-        Parser.PConstant Parser.ParseEmptyList -> do
+        Parser.List list -> do
           let emptyListType = Scheme ["a", "t"] $ ListType (BaseDim (NormDim (Map.singleton (PolyDim "a") 1)))
           dim <- instantiate emptyListType
-          return $ TypeCheckResult nullSubst dim (EConstant ExecutionValueEmptyList)
-        Parser.PConstant (Parser.ParseRecord record) -> do
+          return $ TypeCheckResult nullSubst dim (EConstant (ExecutionValueList ))
+        Parser.Record record -> do
           recordEntries <- forM (Map.toList record) $ \(key, el) -> do
             TypeCheckResult sub _type ex <- ti state el
             return (key, (sub, _type, ex))
@@ -475,7 +405,7 @@ ti state (Parser.Positioned pos expression) =
               elems = map (\(key, (_, _, value)) -> (key, value)) recordEntries
               substitutions = map (\(_, (sub, _, _)) -> sub) recordEntries
           return $ TypeCheckResult (foldSubst substitutions) (DictType (Map.fromList dimension)) (EConstant $ ExecutionValueDict (Map.fromList elems))
-        Parser.PBinOp "" e1 e2 ->
+        Parser.BinOp "" e1 e2 ->
           do
             tv <- newTyVar "a"
             TypeCheckResult sub1 type1 ex1 <- ti state e1
@@ -483,7 +413,7 @@ ti state (Parser.Positioned pos expression) =
             let reason = BinaryOpUnificationReason "" (e1, type1) (e2, type2)
             sub3 <- liftUMtoTI pos reason $ mgu (apply sub2 type1) (FuncType type2 tv)
             return $ TypeCheckResult (sub3 `composeSubst` sub2 `composeSubst` sub1) (apply sub3 tv) (EBinOp "" ex1 ex2)
-        Parser.PBinOp opName e1 e2 ->
+        Parser.BinOp opName e1 e2 ->
           do
             case filter ((== opName) . InBuilt.opName) InBuilt.inBuiltBinaryOperations of
               [] -> throwError $ Parser.Positioned pos $ InternalError $ "ERROR, COULD NOT FIND OPERATION " <> opName
@@ -495,14 +425,14 @@ ti state (Parser.Positioned pos expression) =
                 let reason = BinaryOpUnificationReason opName (e1, t1) (e2, t2)
                 s3 <- liftUMtoTI pos reason $ mgu opType (t1 `FuncType` (t2 `FuncType` tv))
                 return $ TypeCheckResult (s3 `composeSubst` s2 `composeSubst` s1) (apply s3 tv) (EBinOp opName ex1 ex2)
-        Parser.PAccess e1 x ->
+        Parser.Access e1 x ->
           do
             tv <- newTyVar "a"
             TypeCheckResult s1 t1 ex1 <- ti state e1
             let reason = AccessUnificationReason (e1, t1) x
             s2 <- liftUMtoTI pos reason $ mgu t1 (PolyDictType (Map.singleton x tv))
             return $ TypeCheckResult (s2 `composeSubst` s1) (apply s2 tv) (EAccess ex1 x)
-        Parser.PPrefix preOp e1 ->
+        Parser.Prefix preOp e1 ->
           case filter ((== preOp) . InBuilt.opName) InBuilt.inBuiltPrefixOperations of
             [] -> throwError $ Parser.Positioned pos (MissingVariableError preOp)
             op : _ -> do
@@ -514,7 +444,7 @@ ti state (Parser.Positioned pos expression) =
               s2 <- liftUMtoTI pos reason $ mgu prefixType (t1 `FuncType` tv)
               return $ TypeCheckResult (s2 `composeSubst` s1) (apply s2 tv) (ENegate ex1)
 
-evaluateDimension :: Set.Set T.Text -> Parser.ParseDimension -> TI Dimension
+evaluateDimension :: Set.Set T.Text -> Parser.Dimension -> TI Dimension
 evaluateDimension allowedUnits dim =
   case dim of
     Parser.PowParseDim components ->
@@ -522,8 +452,8 @@ evaluateDimension allowedUnits dim =
     Parser.NormalParseDim components ->
       NormDim <$> foldM addToDimensionMap Map.empty components
   where
-    addToDimensionMap :: Map.Map PrimitiveDim Int -> Parser.Positioned Parser.ParseDimensionPart -> TI (Map.Map PrimitiveDim Int)
-    addToDimensionMap dimMap (Parser.Positioned p (Parser.ParseDimensionPart name power)) =
+    addToDimensionMap :: Map.Map PrimitiveDim Int -> Parser.Positioned Parser.DimensionPart -> TI (Map.Map PrimitiveDim Int)
+    addToDimensionMap dimMap (Parser.Positioned p (Parser.DimensionPart name power)) =
       if Set.member name allowedUnits
         then return $ Map.insert (LitDim name) power dimMap
         else throwError $ Parser.Positioned p $ MissingUnitError name
