@@ -1,9 +1,16 @@
-module TypeCheck.Dimensions where
+module Pedant.TypeCheck.Dimensions where
 
-import qualified Pedant.Types as Types
+import qualified Pedant.TypeCheck.Types as Types
+
+data PrimitiveDim
+  = -- | Literal dimension, such as years
+    LitDim Types.UnitName
+  | -- | Polymorphic dimension, such as <a>
+    PolyPrimDim PolyTypeName
+  deriving (Eq, Ord)
 
 -- | Attempts to find a unification between dimensions
-mguDim :: Types.Dimension -> Types.Dimension -> UM Types.Substitution
+mguDim :: Types.Dimension -> Types.Dimension -> Types.UM Types.Substitution
 mguDim (NormDim t) (NormDim u) =
   if u == t
     then return nullSubst
@@ -64,3 +71,36 @@ mguDim (PowDim u) (NormDim t) =
     s2 <- mguDim (NormDim Map.empty) (apply s1 (NormDim t))
     return $ s2 `composeSubst` s1
     `catchError` (\_ -> throwError [(BaseDim (NormDim u), BaseDim (PowDim t))])
+
+  ftv :: Dimension -> Set.Set PolyTypeName
+  ftv (NormDim n) =
+    let keys = Map.keys n
+     in Set.fromList $ Maybe.mapMaybe polymorphicVar keys
+    where
+      polymorphicVar :: PrimitiveDim -> Maybe PolyTypeName
+      polymorphicVar (PolyPrimDim a) = Just a
+      polymorphicVar _ = Nothing
+  ftv (PowDim n) = ftv (NormDim n)
+  ftv (PolyDim n) = Set.singleton n
+
+  apply :: Substitution -> Dimension -> Dimension
+  apply s dim =
+    case dim of
+      NormDim n -> NormDim $ Map.foldlWithKey applyOne Map.empty n
+      PowDim n -> PowDim $ Map.foldlWithKey applyOne Map.empty n
+      PolyDim name -> 
+        case Map.lookup name (subDimensions s) of
+          Nothing -> PolyDim name
+          Just x -> apply s x
+    where
+      applyOne :: Map.Map PrimitiveDim Int -> PrimitiveDim -> Int -> Map.Map PrimitiveDim Int
+      applyOne dimMap (LitDim x) power = Map.filter (/= 0) $ Map.unionWith (+) dimMap (Map.singleton (LitDim x) power)
+      applyOne dimMap (PolyPrimDim x) power =
+        case Map.lookup x (subDimensions s) of
+          Just (NormDim substitution) -> combine dimMap (Map.map (* power) substitution)
+          Just (PowDim substitution) -> combine dimMap (Map.map (* power) substitution)
+          Just (PolyDim x) -> PolyDim x
+          Nothing -> combine dimMap (Map.singleton (PolyPrimDim x) power)
+
+      combine :: Map.Map PrimitiveDim Int -> Map.Map PrimitiveDim Int -> Map.Map PrimitiveDim Int
+      combine a b = Map.filter (/= 0) $ Map.unionWith (+) a b

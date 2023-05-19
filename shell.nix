@@ -7,6 +7,7 @@ let
     filepath
     hslogger 
     hspec 
+    random
     lsp 
     megaparsec 
     ordered-containers 
@@ -24,6 +25,7 @@ pkgs.mkShell {
     haskell-language-server
     coq
     nodejs
+    hpack
     yarn
   ];
 }

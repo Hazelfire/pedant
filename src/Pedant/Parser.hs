@@ -21,104 +21,19 @@ import qualified Control.Monad.Combinators.Expr as Expr
 import qualified Data.Bifunctor as Bifunctor
 import qualified Data.List as List
 import Data.List.NonEmpty (NonEmpty (..))
-import qualified Data.Map as Map
 import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Void (Void)
 import qualified Pedant.InBuilt as InBuilt
-import Pedant.Types (Operation (..), PedantParseError (..), PrettyPrint (..))
+import qualified Pedant.Types as Types
 import Text.Megaparsec
 import Text.Megaparsec.Char
 import qualified Text.Megaparsec.Char.Lexer as L
+import Pedant.Types (VariableName)
+import Data.Char (GeneralCategory(LetterNumber))
 
 -- | We now define a parser for this typed language
-data Assignment = Assignment
-  { assignmentName :: T.Text,
-    assignmentArguments :: [T.Text],
-    assignmentExpression :: Positioned Expression
-  }
-  deriving (Show)
-
-data Statement
-  = AssignmentStatement Assignment
-  | UnitStatement [Positioned T.Text]
-  | ImportStatement (Positioned T.Text) [Positioned T.Text]
-  deriving (Show)
-
-data PositionData = PositionData {
-  pdOffset :: Int,
-  pdLength :: Int
-}
-  deriving (Show, Eq, Ord)
-
-data Positioned a = Positioned {
-  positionedData :: PositionData,
-  positionedValue :: a
-}  deriving (Show)
-
-instance Eq a => Eq (Positioned a) where
-  (==) (Positioned a1 b1) (Positioned a2 b2) = a1 == a2 && b1 == b2
-
-instance Functor Positioned where
-  fmap f (Positioned p x) = Positioned p (f x)
-
-data DimensionPart = DimensionPart
-  { pdpName :: T.Text,
-    pdpPower :: Int
-  }
-  deriving (Show, Eq)
-
-instance PrettyPrint DimensionPart where
-  pPrint (DimensionPart name power) =
-    if power == 1
-      then name
-      else T.concat [name, T.pack (show power)]
-
-data Dimension
-  = PowParseDim [Positioned DimensionPart]
-  | NormalParseDim [Positioned DimensionPart]
-  deriving (Show, Eq)
-
-instance PrettyPrint Dimension where
-  pPrint (NormalParseDim parts) = T.unwords (map pPrint parts)
-  pPrint (PowParseDim parts) = "^" <> T.unwords (map pPrint parts)
-
-newtype BinaryOperation = BinaryOperation T.Text deriving (Show, Eq)
-newtype VariableName = VariableName T.Text deriving (Show, Eq)
-newtype RecordKey = RecordKey T.Text deriving (Show, Eq, Ord)
-newtype PrefixOperation = PrefixOperation T.Text deriving (Show, Eq)
-newtype AccessKey = AccessKey T.Text deriving (Show, Eq)
-
-data Expression
-  = BinOp BinaryOperation (Positioned Expression) (Positioned Expression)
-  | Variable VariableName
-  | Number Double Dimension
-  | List [Positioned Expression]
-  | Record (Map.Map RecordKey (Positioned Expression))
-  | Prefix PrefixOperation (Positioned Expression)
-  | Access (Positioned Expression) AccessKey
-  deriving (Show, Eq)
-
-instance PrettyPrint a => PrettyPrint (Positioned a) where
-  pPrint (Positioned _ a) = pPrint a
-
-instance PrettyPrint Expression  where
-  pPrint (BinOp (BinaryOperation op) e1 e2) = T.unwords [pPrint e1, op, pPrint e2]
-  pPrint (Variable (VariableName var)) = var
-  pPrint (Prefix (PrefixOperation op) e1) = T.concat [op, pPrint e1]
-  pPrint (Access e1 (AccessKey att)) = T.concat [pPrint e1, att]
-  pPrint (Number num dim) = T.unwords [T.pack $ show num, pPrint dim]
-  pPrint (List list) = T.concat ["[", T.intercalate ", " (map pPrint list), "]"]
-  pPrint (Record op) =
-    T.concat
-      [ "{",
-        T.intercalate ", " (map (\(RecordKey key, value) -> T.concat [key, " = ", pPrint value]) (Map.toAscList op)),
-        "}"
-      ]
-
-data Function = NaturalLogarithm
-  deriving (Show)
 
 type Parser = Parsec Void Text
 

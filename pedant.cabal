@@ -1,6 +1,6 @@
 cabal-version: 1.12
 
--- This file has been generated from package.yaml by hpack version 0.35.1.
+-- This file has been generated from package.yaml by hpack version 0.35.2.
 --
 -- see: https://github.com/sol/hpack
 
@@ -41,7 +41,13 @@ library
       Pedant.InBuilt
       Pedant.LSP
       Pedant.Parser
+      Pedant.Parser.Types
       Pedant.TypeCheck
+      Pedant.TypeCheck.Dimensions
+      Pedant.TypeCheck.Expressions
+      Pedant.TypeCheck.LambdaCalculus
+      Pedant.TypeCheck.TypeError
+      Pedant.TypeCheck.Types
       Pedant.Types
       Paths_pedant
   hs-source-dirs:
@@ -95,7 +101,13 @@ test-suite tests
       Pedant.InBuilt
       Pedant.LSP
       Pedant.Parser
+      Pedant.Parser.Types
       Pedant.TypeCheck
+      Pedant.TypeCheck.Dimensions
+      Pedant.TypeCheck.Expressions
+      Pedant.TypeCheck.LambdaCalculus
+      Pedant.TypeCheck.TypeError
+      Pedant.TypeCheck.Types
       Pedant.Types
       Paths_pedant
   hs-source-dirs:

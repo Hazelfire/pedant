@@ -13,17 +13,15 @@ where
 import qualified Data.Map as Map
 import qualified Data.Text as T
 import Pedant.Types
-  ( Dimension (..),
+  ( 
     InternalFunction (..),
     NumericValue (..),
-    PrimitiveDim (..),
-    Scheme (..),
-    Type (..),
   )
+import qualified Pedant.TypeCheck.Types as TC
 
 data Operation = Operation
   { opName :: T.Text,
-    opType :: Scheme,
+    opType :: TC.TypeInferenceMonad TC.Type,
     opPrecedence :: Int,
     opFunc :: OpFunc
   }
@@ -32,21 +30,36 @@ data OpFunc
   = BinFunc (NumericValue -> NumericValue -> NumericValue)
   | UnaryFunc (NumericValue -> NumericValue)
 
+withPolyNormalDimension :: (TC.NormalDimension -> TC.Type) -> TC.TypeInferenceMonad TC.Type
+withPolyNormalDimension f = f <$> TC.newPolyNormDim
+
 inBuiltBinaryOperations :: [Operation]
 inBuiltBinaryOperations =
   [ Operation
       "+"
-      (Scheme ["a", "t"] $ normalDimPoly "a" `FuncType` (normalDimPoly "a" `FuncType` normalDimPoly "a"))
+      (do
+        var <- TC.newPolyNormDim
+        let myType = TC.NumberType $ TC.NormDim var
+        return $ myType `TC.FuncType` myType `TC.FuncType` myType
+      )
       4
       (BinFunc (+)),
     Operation
       "-"
-      (Scheme ["a", "t"] $ normalDimPoly "a" `FuncType` (normalDimPoly "a" `FuncType` normalDimPoly "a"))
+      (do
+        var <- TC.newPolyNormDim
+        let myType = TC.NumberType $ TC.NormDim var
+        return $ myType `TC.FuncType` myType `TC.FuncType` myType
+      )
       4
       (BinFunc (-)),
     Operation
       "*"
-      (Scheme ["a", "b", "t"] $ normalDimPoly "a" `FuncType` (normalDimPoly "b" `FuncType` normalDim [(PolyDim "a", 1), (PolyDim "b", 1)]))
+      (do
+        var1 <- TC.newPolyNormDim
+        var2 <- TC.newPolyNormDim
+        return $ TC.NumberType (TC.NormDim var1) `TC.FuncType` TC.NumberType (TC.NormDim var2) `TC.FuncType` (TC.NumberType . TC.NormDim $ TC.multiplyNormalDimensions var1 var2)
+        )
       3
       (BinFunc (*)),
     Operation
@@ -76,21 +89,21 @@ inBuiltPrefixOperations = [Operation "-" (Scheme ["a", "t"] $ normalDimPoly "a" 
 
 data Function = Function
   { funcName :: T.Text,
-    funcType :: Scheme,
+    funcType :: TC.TypeInferenceMonad TC.Scheme,
     funcDef :: InternalFunction
   }
 
 inBuiltFunctions :: [Function]
 inBuiltFunctions = [Function "ln" (Scheme ["t", "a"] $ powerDimPoly "a" `FuncType` normalDimPoly "a") (InternalFunction log)]
 
-normalDimPoly :: T.Text -> Type
+normalDimPoly :: T.Text -> TC.Type
 normalDimPoly name = BaseDim $ NormDim $ Map.singleton (PolyDim name) 1
 
-powerDimPoly :: T.Text -> Type
+powerDimPoly :: T.Text -> TC.Type
 powerDimPoly name = BaseDim . PowDim $ Map.singleton (PolyDim name) 1
 
-normalDim :: [(PrimitiveDim, Int)] -> Type
+normalDim :: [(TC.PrimitiveDim, Int)] -> TC.Type
 normalDim powers = BaseDim . NormDim $ Map.fromList powers
 
-powerDim :: [(PrimitiveDim, Int)] -> Type
+powerDim :: [(TC.PrimitiveDim, Int)] -> TC.Type
 powerDim powers = BaseDim . PowDim $ Map.fromList powers
