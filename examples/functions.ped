@@ -1,3 +1,9 @@
+// Comment
+/* Block comment */
+import common(name1, name2)
 unit usd
 addOne x = x + 1
 addOneUsd x = x + 1 usd
+multiline_declaration = 
+  2 + 5 + addOne 6
+y = 2
